@@ -1,0 +1,33 @@
+# Python virtual environments
+venv/
+env/
+.env/
+.venv/
+
+# Build and distribution
+build/
+dist/
+*.egg-info/
+
+# Cache directories
+__pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Dependencies
+node_modules/
+
+# Large data files and models
+*.pkl
+*.h5
+*.model
+data/
+models/
+
+# IDE specific
+.vscode/
+.idea/
+
+# System files
+.DS_Store
