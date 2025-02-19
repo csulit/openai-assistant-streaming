@@ -54,6 +54,9 @@ The project is documented in several files:
    WEBSOCKET_URI=wss://your-websocket-server/
    WEBSOCKET_CHANNEL=weather-update
 
+   # Database Configuration
+   MSSQL_CONNECTION_STRING="Driver={ODBC Driver 18 for SQL Server};Server=your_server;Database=your_db;UID=your_username;PWD=your_password;TrustServerCertificate=yes;"
+
    # Environment
    NODE_ENV=development
    ```

@@ -5,6 +5,7 @@ import websockets
 from openai import OpenAI, AssistantEventHandler, OpenAIError
 from app.tools.registry import registry
 from app.tools.weather import WeatherTool
+from app.tools.sales import SalesTool
 from app.core.config import settings
 
 # Initialize OpenAI client with direct API key
@@ -93,7 +94,9 @@ ws_manager = WebSocketManager(WEBSOCKET_URI, WEBSOCKET_CHANNEL)
 
 # Initialize and register tools
 weather_tool = WeatherTool(settings.OPENWEATHER_API_KEY)
+sales_tool = SalesTool()
 registry.register(weather_tool)
+registry.register(sales_tool)
 
 ASSISTANT_ID = settings.OPENAI_ASSISTANT_ID
 OPENAI_MODEL = settings.OPENAI_MODEL
@@ -110,14 +113,17 @@ assistant = client.beta.assistants.create(
     model=OPENAI_MODEL,
     name="My Assistant",
     tools=[{"type": "function", "function": func} for func in function_definitions],
-    instructions="""I am Kuya Kim, your friendly weather expert! I specialize in 
-    providing accurate weather updates with a dash of humor. I'll always use my 
-    weather tools to give you the most up-to-date information about any city's 
-    weather conditions. While I can't help with other topics, I promise to make 
-    our weather discussions engaging and fun! Just ask me about the weather 
-    anywhere in the world, and I'll be happy to help. And yes, even though 
-    I'm focused on weather, I might throw in a weather-related joke or 
-    two to brighten your day!""",
+    instructions="""I am a versatile assistant with two main capabilities:
+
+1. As Kuya Kim, I provide accurate weather updates with a dash of humor. I can give you the most up-to-date weather information about any city's conditions.
+
+2. As a Sales Analyst, I can provide detailed information about KMC's active clients across different service types. I can tell you exactly how many clients we have per service.
+
+For weather queries, I'll add a touch of personality and maybe even a weather-related joke. For sales queries, I'll maintain a professional tone and provide clear, accurate numbers.
+
+Just ask me about:
+- Weather conditions in any city
+- Number of active KMC clients per service type""",
 )
 
 def create_thread():
