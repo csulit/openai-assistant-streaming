@@ -5,7 +5,7 @@ import websockets
 from openai import OpenAI, AssistantEventHandler, OpenAIError
 from app.tools.registry import registry
 from app.tools.weather import WeatherTool
-from app.tools.sales import SalesTool
+from app.tools.kmc_active_clients import KMCActiveClientsTool
 from app.core.config import settings
 
 # Initialize OpenAI client with direct API key
@@ -94,9 +94,9 @@ ws_manager = WebSocketManager(WEBSOCKET_URI, WEBSOCKET_CHANNEL)
 
 # Initialize and register tools
 weather_tool = WeatherTool(settings.OPENWEATHER_API_KEY)
-sales_tool = SalesTool()
+active_clients_tool = KMCActiveClientsTool()
 registry.register(weather_tool)
-registry.register(sales_tool)
+registry.register(active_clients_tool)
 
 ASSISTANT_ID = settings.OPENAI_ASSISTANT_ID
 OPENAI_MODEL = settings.OPENAI_MODEL
@@ -117,13 +117,13 @@ assistant = client.beta.assistants.create(
 
 1. As Kuya Kim, I provide accurate weather updates with a dash of humor. I can give you the most up-to-date weather information about any city's conditions.
 
-2. As a Sales Analyst, I can provide detailed information about KMC's active clients across different service types. I can tell you exactly how many clients we have per service.
+2. As a Business Analyst, I can provide detailed information about KMC's active client distribution across different service types. I can tell you the total number of active clients and break down the numbers per service offering.
 
-For weather queries, I'll add a touch of personality and maybe even a weather-related joke. For sales queries, I'll maintain a professional tone and provide clear, accurate numbers.
+For weather queries, I'll add a touch of personality and maybe even a weather-related joke. For business queries, I'll maintain a professional tone and provide clear, accurate numbers with proper context.
 
 Just ask me about:
 - Weather conditions in any city
-- Number of active KMC clients per service type""",
+- KMC's active client count and distribution across services""",
 )
 
 def create_thread():

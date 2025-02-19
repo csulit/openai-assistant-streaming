@@ -6,13 +6,13 @@ globs:
 
 ## Project Overview
 
-This is a specialized AI assistant project for KMC Solutions that combines weather information and sales analytics. The project uses OpenAI's Assistant API with WebSocket integration for real-time updates and follows a strict architectural pattern.
+This is a specialized AI assistant project for KMC Solutions that combines weather information and business analytics. The project uses OpenAI's Assistant API with WebSocket integration for real-time updates and follows a strict architectural pattern.
 
 ## Core Principles
 
 1. **Dual Personality Maintenance**:
    - Weather queries: Maintain Kuya Kim's friendly, humorous personality
-   - Sales queries: Maintain professional, analytical tone
+   - Business queries: Maintain professional, analytical tone
    - Never mix personalities between functions
 
 2. **Real-time Communication**:
@@ -29,32 +29,51 @@ This is a specialized AI assistant project for KMC Solutions that combines weath
 
 When creating or modifying tools:
 
-1. **Base Structure**:
+1. **Naming Conventions**:
+   - Use specific, focused file names (e.g., `kmc_active_clients.py`)
+   - Avoid generic names (e.g., 'sales.py', 'utils.py')
+   - Class names should match file purpose (e.g., `KMCActiveClientsTool`)
+   - Include descriptive suffixes (e.g., Tool, Service)
+   - Examples:
+     ```
+     ✅ Good:
+     - kmc_active_clients.py → KMCActiveClientsTool
+     - weather.py → WeatherTool
+     
+     ❌ Bad:
+     - sales.py → SalesTool
+     - business.py → BusinessTool
+     ```
+
+2. **Base Structure**:
    ```python
    from typing import Dict, Any
    from .base import BaseAssistantTool
 
-   class YourTool(BaseAssistantTool):
+   class YourSpecificTool(BaseAssistantTool):
+       """Tool for specific functionality - provide clear description"""
+       
        @property
        def name(self) -> str:
-           return "your_function_name"
+           return "your_specific_function_name"
 
        def get_function_definition(self) -> Dict[str, Any]:
            # Must include comprehensive description and parameters
            pass
 
-       async def your_function_name(self) -> Dict[str, Any]:
+       async def your_specific_function_name(self) -> Dict[str, Any]:
            # Must include proper error handling and logging
            pass
    ```
 
-2. **Error Handling Requirements**:
+3. **Error Handling Requirements**:
    - Use try-except blocks for all external operations
    - Include comprehensive logging
    - Propagate errors with meaningful messages
    - Send error notifications via WebSocket
+   - Handle database/API errors appropriately
 
-3. **Configuration Management**:
+4. **Configuration Management**:
    - Add new settings to `app/core/config.py`
    - Use environment variables for sensitive data
    - Include default values where appropriate
@@ -85,12 +104,14 @@ When working with database tools:
    - Implement proper connection cleanup
    - Handle connection timeouts
    - Log connection issues
+   - Test connections on initialization
 
 2. **Query Safety**:
    - Use parameterized queries
    - Implement query timeout
    - Handle large result sets appropriately
    - Format results consistently
+   - Include proper error handling
 
 ## Documentation Requirements
 
@@ -107,49 +128,7 @@ When modifying the project:
    - `contributing.md` for new development patterns
    - `websocket.md` for WebSocket changes
    - `main.py.md` for core functionality changes
-
-## Testing Guidelines
-
-Before submitting changes:
-
-1. **Connection Testing**:
-   - Test WebSocket connectivity
-   - Verify database connections
-   - Check API integrations
-
-2. **Error Handling**:
-   - Test error scenarios
-   - Verify error messages
-   - Check WebSocket error propagation
-
-3. **Response Format**:
-   - Verify message format consistency
-   - Check status updates
-   - Validate timestamps
-
-## Security Considerations
-
-1. **Environment Variables**:
-   - Never hardcode sensitive data
-   - Use settings for configuration
-   - Update .env.example with new variables
-
-2. **Data Protection**:
-   - Sanitize database inputs
-   - Validate API responses
-   - Handle sensitive data appropriately
-
-## Performance Guidelines
-
-1. **Async Operations**:
-   - Use async/await for I/O operations
-   - Implement proper error handling
-   - Maintain connection pools
-
-2. **Resource Management**:
-   - Clean up connections
-   - Handle memory efficiently
-   - Implement timeouts
+   - `ai_instruction.md` for AI behavior changes
 
 ## Response Formatting
 
@@ -158,28 +137,19 @@ Before submitting changes:
    - Add Kuya Kim's personality
    - Include weather-appropriate jokes
 
-2. **Sales Responses**:
+2. **Business Analytics Responses**:
    - Format numbers consistently
    - Provide clear summaries
    - Maintain professional tone
-
-## Maintenance Rules
-
-1. **Version Control**:
-   - Update requirements.txt with new dependencies
-   - Maintain consistent versioning
-   - Document breaking changes
-
-2. **Configuration Updates**:
-   - Add new settings to config.py
-   - Update environment variable documentation
-   - Maintain backward compatibility
+   - Include relevant context
+   - Present data in a structured format
 
 ## Best Practices Checklist
 
 Before implementing changes:
 
 - [ ] Does it follow the modular architecture?
+- [ ] Does the tool name follow naming conventions?
 - [ ] Are all configurations in settings?
 - [ ] Is proper error handling implemented?
 - [ ] Are WebSocket messages properly formatted?
@@ -189,10 +159,12 @@ Before implementing changes:
 - [ ] Are tests included?
 - [ ] Is the personality maintained?
 - [ ] Are resource cleanups implemented?
+- [ ] Are database operations properly handled?
 
 ## Prohibited Actions
 
 1. DO NOT:
+   - Use generic tool names
    - Mix tool personalities
    - Hardcode credentials
    - Skip error handling
@@ -203,5 +175,18 @@ Before implementing changes:
    - Change message formats
    - Skip logging
    - Modify core architecture
+   - Use non-descriptive variable names
 
-Remember: This project serves as a critical interface for KMC Solutions. Maintain high standards for code quality, security, and user experience. 
+## Current Tools
+
+1. **Weather Information**:
+   - File: `weather.py`
+   - Class: `WeatherTool`
+   - Purpose: Provide weather information with Kuya Kim's personality
+
+2. **KMC Client Analytics**:
+   - File: `kmc_active_clients.py`
+   - Class: `KMCActiveClientsTool`
+   - Purpose: Provide active client counts per service type
+
+Remember: This project serves as a critical interface for KMC Solutions. Maintain high standards for code quality, security, and user experience. Follow the naming conventions strictly and ensure proper separation of concerns. 
