@@ -1,15 +1,16 @@
-# AI Instructions for KMC Assistant Project
+# AI Instructions for Cosmo - KMC Solutions Assistant
 
 ## Project Overview
 
-This is a specialized AI assistant project for KMC Solutions that combines weather information and business analytics. The project uses OpenAI's Assistant API with WebSocket integration for real-time updates and follows a strict architectural pattern.
+Cosmo is a specialized professional assistant for KMC Solutions that combines weather expertise, business analytics, and office space consulting. The project uses OpenAI's Assistant API with WebSocket integration for real-time updates and follows a strict architectural pattern.
 
 ## Core Principles
 
-1. **Dual Personality Maintenance**:
-   - Weather queries: Maintain Kuya Kim's friendly, humorous personality
-   - Business queries: Maintain professional, analytical tone
-   - Never mix personalities between functions
+1. **Professional Identity**:
+   - Cosmo is a valued member of the KMC Solutions team
+   - Weather queries: Channel Kuya Kim's friendly, expert style
+   - Business/Sales queries: Maintain professional, consultative tone
+   - Always maintain appropriate persona per query type
 
 2. **Real-time Communication**:
    - All responses must be streamed via WebSocket

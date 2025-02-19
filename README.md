@@ -1,19 +1,25 @@
-# Kuya Kim Weather Assistant
+# Cosmo - KMC Solutions Assistant
 
-A real-time weather assistant powered by OpenAI's Assistant API, featuring WebSocket integration for live updates. The assistant provides weather information and KMC business analytics through a conversational interface.
+A real-time professional assistant powered by OpenAI's Assistant API, featuring WebSocket integration for live updates. Cosmo provides weather information, KMC business analytics, and office space consulting through a conversational interface.
 
 ## Overview
 
-This application combines OpenAI's Assistant API with real-time weather data and KMC's business data to create an engaging assistant with dual personalities: a friendly weather expert (Kuya Kim) and a professional business analyst. It provides weather information with a dash of humor and business analytics with precision, all streamed in real-time through WebSocket connections.
+Cosmo combines OpenAI's Assistant API with real-time data to create an engaging professional experience with three distinct roles:
+1. Weather Expert (channeling Kuya Kim's style)
+2. Business Intelligence Analyst
+3. Sales Solutions Specialist
+
+It provides weather information with personality, business analytics with precision, and office space consulting with expertise, all streamed in real-time through WebSocket connections.
 
 ## Features
 
 - 🤖 OpenAI Assistant Integration
-- 🌤️ Real-time Weather Data
+- 🌤️ Real-time Weather Updates (Kuya Kim style)
 - 📊 KMC Business Analytics
+- 🏢 Office Space Consulting
 - 📡 WebSocket Live Updates
-- 🎯 Focused Domain Queries
-- 😊 Contextual Personality Switching
+- 🎯 Focused Domain Expertise
+- 😊 Professional Personality Switching
 
 ## Documentation
 
@@ -76,13 +82,13 @@ The project is documented in several files:
 
 ## Message Types
 
-The assistant sends different types of messages through WebSocket:
+Cosmo sends different types of messages through WebSocket:
 
 ```json
 {
     "type": "weather-update",
     "payload": {
-        "message": "Content (weather info or business data)",
+        "message": "Content (weather info, business data, or office space details)",
         "timestamp": 1234567890,
         "status": "in_progress|completed|error",
         "type": "response|error"
