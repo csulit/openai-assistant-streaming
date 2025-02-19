@@ -11,8 +11,8 @@ from app.core.config import settings
 client = OpenAI(api_key=settings.OPENAI_API_KEY)
 
 # WebSocket configuration
-WEBSOCKET_URI = "ws://localhost:4000"
-WEBSOCKET_CHANNEL = "weather-update"
+WEBSOCKET_URI = settings.WEBSOCKET_URI
+WEBSOCKET_CHANNEL = settings.WEBSOCKET_CHANNEL
 
 class WebSocketManager:
     def __init__(self, uri, channel):

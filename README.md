@@ -40,10 +40,22 @@ The project is documented in several files:
 
 ## Quick Start
 
-1. Set up environment variables:
+1. Set up environment variables in `.env`:
    ```bash
+   # OpenAI Configuration
    OPENAI_API_KEY=your_openai_key
+   OPENAI_MODEL=gpt-4-1106-preview
+   OPENAI_ASSISTANT_ID=your_assistant_id
+
+   # Weather API Configuration
    OPENWEATHER_API_KEY=your_weather_key
+
+   # WebSocket Configuration
+   WEBSOCKET_URI=wss://your-websocket-server/
+   WEBSOCKET_CHANNEL=weather-update
+
+   # Environment
+   NODE_ENV=development
    ```
 
 2. Install dependencies:
@@ -51,7 +63,7 @@ The project is documented in several files:
    pip install -r requirements.txt
    ```
 
-3. Start the WebSocket server (port 4000)
+3. Start the WebSocket server (the server specified in WEBSOCKET_URI)
 
 4. Run the assistant:
    ```bash
