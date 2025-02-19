@@ -5,14 +5,16 @@ import websockets
 from openai import OpenAI, AssistantEventHandler, OpenAIError
 from app.tools.registry import registry
 from app.tools.weather import WeatherTool
+from app.tools.kmc_active_clients import KMCActiveClientsTool
+from app.tools.kmc_available_offices import KMCAvailableOfficesTool
 from app.core.config import settings
 
 # Initialize OpenAI client with direct API key
 client = OpenAI(api_key=settings.OPENAI_API_KEY)
 
 # WebSocket configuration
-WEBSOCKET_URI = "ws://localhost:4000"
-WEBSOCKET_CHANNEL = "weather-update"
+WEBSOCKET_URI = settings.WEBSOCKET_URI
+WEBSOCKET_CHANNEL = settings.WEBSOCKET_CHANNEL
 
 class WebSocketManager:
     def __init__(self, uri, channel):
@@ -93,7 +95,11 @@ ws_manager = WebSocketManager(WEBSOCKET_URI, WEBSOCKET_CHANNEL)
 
 # Initialize and register tools
 weather_tool = WeatherTool(settings.OPENWEATHER_API_KEY)
+active_clients_tool = KMCActiveClientsTool()
+available_offices_tool = KMCAvailableOfficesTool()
 registry.register(weather_tool)
+registry.register(active_clients_tool)
+registry.register(available_offices_tool)
 
 ASSISTANT_ID = settings.OPENAI_ASSISTANT_ID
 OPENAI_MODEL = settings.OPENAI_MODEL
@@ -110,14 +116,22 @@ assistant = client.beta.assistants.create(
     model=OPENAI_MODEL,
     name="My Assistant",
     tools=[{"type": "function", "function": func} for func in function_definitions],
-    instructions="""I am Kuya Kim, your friendly weather expert! I specialize in 
-    providing accurate weather updates with a dash of humor. I'll always use my 
-    weather tools to give you the most up-to-date information about any city's 
-    weather conditions. While I can't help with other topics, I promise to make 
-    our weather discussions engaging and fun! Just ask me about the weather 
-    anywhere in the world, and I'll be happy to help. And yes, even though 
-    I'm focused on weather, I might throw in a weather-related joke or 
-    two to brighten your day!""",
+    instructions="""
+        I am a versatile assistant with three main capabilities:
+
+        1. As Kuya Kim, I provide accurate weather updates with a dash of humor. I can give you the most up-to-date weather information about any city's conditions.
+
+        2. As a Business Analyst, I can provide detailed information about KMC's active client distribution across different service types. I can tell you the total number of active clients and break down the numbers per service offering.
+
+        3. As a Sales Specialist, I can help find available office spaces in KMC buildings based on location and capacity requirements. Just tell me the city and how many people need to be accommodated.
+
+        For weather queries, I'll add a touch of personality and maybe even a weather-related joke. For business and sales queries, I'll maintain a professional tone and provide clear, accurate information with proper context.
+
+        Just ask me about:
+        - Weather conditions in any city
+        - KMC's active client count and distribution across services
+        - Available office spaces in specific locations with capacity requirements
+    """,
 )
 
 def create_thread():
@@ -258,7 +272,7 @@ def run_conversation():
         thread = create_thread()
         print(f"\nCreated thread: {thread.id}")
         
-        message = create_message(thread.id, "Is it raining in Makati?")
+        message = create_message(thread.id, "Which sites have available spaces for 30 people within Makati and nearby cities?")
         print(f"Created message: {message.id}")
         
         print("\nStarting conversation stream...")

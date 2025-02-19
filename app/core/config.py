@@ -14,6 +14,13 @@ class Settings(BaseSettings):
     # Weather API settings
     OPENWEATHER_API_KEY: str
     
+    # WebSocket settings
+    WEBSOCKET_URI: str = "wss://erp-v2-cosmo-socket.kmc.solutions/"
+    WEBSOCKET_CHANNEL: str = "weather-update"
+    
+    # Database settings
+    MSSQL_CONNECTION_STRING: str
+    
     # Environment settings
     NODE_ENV: str = "development"
 
@@ -27,8 +34,10 @@ class Settings(BaseSettings):
         
         super().__init__(**kwargs)
         
-        # Debug: Print final value after initialization
+        # Debug: Print final values after initialization
         print("\nDebug - Final Settings values:")
         print(f"OPENAI_API_KEY in Settings: {'*' * 8}")
+        print(f"WEBSOCKET_URI in Settings: {self.WEBSOCKET_URI}")
+        print(f"Database connection configured: {'Yes' if self.MSSQL_CONNECTION_STRING else 'No'}")
 
 settings = Settings() 

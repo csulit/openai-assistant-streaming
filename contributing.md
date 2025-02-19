@@ -8,7 +8,28 @@ The project uses a modular architecture with the following key components:
 
 - `app/tools/base.py`: Contains the base classes and protocols for creating tools
 - `app/tools/registry.py`: Manages tool registration and execution
+- `app/tools/weather.py`: Weather information functionality
+- `app/tools/kmc_active_clients.py`: KMC client analytics functionality
 - `main.py`: Initializes the OpenAI assistant and handles the conversation flow
+
+## Tool Naming Conventions
+
+1. **Specific and Focused**:
+   - Use clear, specific names for tool files
+   - Name should reflect exact functionality
+   - Avoid generic names (e.g., 'sales.py', 'utils.py')
+   - Examples: 
+     - ✅ `kmc_active_clients.py`
+     - ✅ `weather.py`
+     - ❌ `sales.py`
+     - ❌ `business.py`
+
+2. **Class Naming**:
+   - Class name should match file purpose
+   - Include descriptive suffix (e.g., Tool, Service)
+   - Examples:
+     - `KMCActiveClientsTool`
+     - `WeatherTool`
 
 ## Creating a New Tool
 
@@ -22,7 +43,9 @@ Example structure:
 from typing import Dict, Any
 from .base import BaseAssistantTool
 
-class YourTool(BaseAssistantTool):
+class YourSpecificTool(BaseAssistantTool):
+    """Tool for specific functionality - provide clear description"""
+    
     def __init__(self):
         # Initialize your tool
         pass
@@ -30,13 +53,13 @@ class YourTool(BaseAssistantTool):
     @property
     def name(self) -> str:
         # Return the function name that will be used by the AI
-        return "your_function_name"
+        return "your_specific_function_name"
 
     def get_function_definition(self) -> Dict[str, Any]:
         # Define the OpenAI function schema
         return {
             "name": self.name,
-            "description": "Description of what your function does",
+            "description": "Detailed description of what your function does",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -50,7 +73,7 @@ class YourTool(BaseAssistantTool):
             }
         }
 
-    async def your_function_name(self, param1: str) -> Dict[str, Any]:
+    async def your_specific_function_name(self, param1: str) -> Dict[str, Any]:
         # Implement your function logic
         # The function name must match the name property
         result = await self._process(param1)
@@ -62,10 +85,10 @@ class YourTool(BaseAssistantTool):
 In `main.py`, register your tool with the registry:
 
 ```python
-from app.tools.your_tool import YourTool
+from app.tools.your_specific_tool import YourSpecificTool
 
 # Initialize your tool
-your_tool = YourTool()
+your_tool = YourSpecificTool()
 
 # Register it with the registry
 registry.register(your_tool)
@@ -77,83 +100,98 @@ registry.register(your_tool)
    - Implement comprehensive error handling in your tool
    - Use logging to track execution
    - Return meaningful error messages
+   - Handle database/API errors appropriately
 
 2. **Async Support**:
    - Implement functions as async when they involve I/O operations
    - Use `httpx` for HTTP requests instead of `requests`
+   - Handle database operations asynchronously when possible
 
 3. **Type Hints**:
    - Use proper type hints for all methods
    - Document parameter types in the function definition
+   - Use descriptive type names
 
 4. **Documentation**:
    - Provide clear descriptions in your function definition
    - Document parameters thoroughly
    - Include examples in docstrings
+   - Update relevant MD files
 
 ## Example Implementation
 
-Here's a simplified version of the WeatherTool as an example:
+Here's a simplified version of the KMCActiveClientsTool as an example:
 
 ```python
 from typing import Dict, Any
-import httpx
+import pyodbc
+import logging
+from ..core.config import settings
 from .base import BaseAssistantTool
 
-class WeatherTool(BaseAssistantTool):
-    def __init__(self, api_key: str):
-        self.api_key = api_key
-        self.base_url = "https://api.openweathermap.org/data/2.5/weather"
+class KMCActiveClientsTool(BaseAssistantTool):
+    """Tool for getting KMC's active client information per service type"""
+    
+    def __init__(self):
+        self.connection_string = settings.MSSQL_CONNECTION_STRING
+        # Test connection on initialization
+        try:
+            with pyodbc.connect(self.connection_string) as conn:
+                logger.info("Successfully connected to MSSQL database")
+        except Exception as e:
+            logger.error(f"Failed to connect to MSSQL database: {str(e)}")
+            raise ValueError("Database connection failed")
 
     @property
     def name(self) -> str:
-        return "get_weather"
+        return "get_active_clients_per_service"
 
     def get_function_definition(self) -> Dict[str, Any]:
         return {
             "name": self.name,
-            "description": "Get current weather information for a city",
+            "description": "Get the count of active clients per service type",
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "city": {
-                        "type": "string",
-                        "description": "City name (e.g., 'London')"
-                    }
-                },
-                "required": ["city"]
+                "properties": {},
+                "required": []
             }
         }
 
-    async def get_weather(self, city: str) -> Dict[str, Any]:
+    async def get_active_clients_per_service(self) -> Dict[str, Any]:
         try:
-            params = {
-                "q": city,
-                "appid": self.api_key,
-                "units": "metric"
-            }
-            async with httpx.AsyncClient() as client:
-                response = await client.get(self.base_url, params=params)
-                response.raise_for_status()
-                return response.json()
+            with pyodbc.connect(self.connection_string) as conn:
+                cursor = conn.cursor()
+                query = "SELECT * FROM vw_ClientCountPerService ORDER BY ClientCount DESC"
+                cursor.execute(query)
+                
+                # Format results
+                response = {
+                    "total_active_clients": sum(row['ClientCount'] for row in results),
+                    "service_breakdown": results
+                }
+                return response
+                
         except Exception as e:
-            raise ValueError(f"Error getting weather data: {str(e)}")
+            logger.error(f"Error in get_active_clients_per_service: {str(e)}")
+            raise ValueError(f"Error getting client data: {str(e)}")
 ```
 
 ## Testing Your Tool
 
 1. Create test cases for your tool
 2. Test error handling
-3. Test with the AI assistant by asking questions that would trigger your tool
+3. Test with the AI assistant
 4. Monitor the logs for proper execution
+5. Verify WebSocket messages
 
 ## Security Considerations
 
-1. Never hardcode sensitive information (API keys, credentials)
+1. Never hardcode sensitive information
 2. Use environment variables for configuration
 3. Validate and sanitize input parameters
 4. Implement rate limiting if necessary
 5. Handle sensitive data appropriately
+6. Use proper database connection management
 
 ## Need Help?
 

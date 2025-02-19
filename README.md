@@ -1,18 +1,19 @@
 # Kuya Kim Weather Assistant
 
-A real-time weather assistant powered by OpenAI's Assistant API, featuring WebSocket integration for live updates and a weather-focused conversational interface.
+A real-time weather assistant powered by OpenAI's Assistant API, featuring WebSocket integration for live updates. The assistant provides weather information and KMC business analytics through a conversational interface.
 
 ## Overview
 
-This application combines OpenAI's Assistant API with real-time weather data to create an engaging weather assistant with the personality of Kuya Kim. It provides weather information with a dash of humor and streams responses in real-time through WebSocket connections.
+This application combines OpenAI's Assistant API with real-time weather data and KMC's business data to create an engaging assistant with dual personalities: a friendly weather expert (Kuya Kim) and a professional business analyst. It provides weather information with a dash of humor and business analytics with precision, all streamed in real-time through WebSocket connections.
 
 ## Features
 
 - 🤖 OpenAI Assistant Integration
 - 🌤️ Real-time Weather Data
+- 📊 KMC Business Analytics
 - 📡 WebSocket Live Updates
-- 🎯 Focused Weather Queries
-- 😊 Engaging Personality (Kuya Kim)
+- 🎯 Focused Domain Queries
+- 😊 Contextual Personality Switching
 
 ## Documentation
 
@@ -40,10 +41,25 @@ The project is documented in several files:
 
 ## Quick Start
 
-1. Set up environment variables:
+1. Set up environment variables in `.env`:
    ```bash
+   # OpenAI Configuration
    OPENAI_API_KEY=your_openai_key
+   OPENAI_MODEL=gpt-4-1106-preview
+   OPENAI_ASSISTANT_ID=your_assistant_id
+
+   # Weather API Configuration
    OPENWEATHER_API_KEY=your_weather_key
+
+   # WebSocket Configuration
+   WEBSOCKET_URI=wss://your-websocket-server/
+   WEBSOCKET_CHANNEL=weather-update
+
+   # Database Configuration
+   MSSQL_CONNECTION_STRING="Driver={ODBC Driver 18 for SQL Server};Server=your_server;Database=your_db;UID=your_username;PWD=your_password;TrustServerCertificate=yes;"
+
+   # Environment
+   NODE_ENV=development
    ```
 
 2. Install dependencies:
@@ -51,7 +67,7 @@ The project is documented in several files:
    pip install -r requirements.txt
    ```
 
-3. Start the WebSocket server (port 4000)
+3. Start the WebSocket server (the server specified in WEBSOCKET_URI)
 
 4. Run the assistant:
    ```bash
@@ -66,9 +82,10 @@ The assistant sends different types of messages through WebSocket:
 {
     "type": "weather-update",
     "payload": {
-        "message": "Current weather information...",
+        "message": "Content (weather info or business data)",
         "timestamp": 1234567890,
-        "status": "in_progress|completed|error"
+        "status": "in_progress|completed|error",
+        "type": "response|error"
     }
 }
 ```
@@ -77,13 +94,17 @@ The assistant sends different types of messages through WebSocket:
 
 ```
 ├── app/
-│   ├── core/         # Core configuration
-│   └── tools/        # Weather tools and registry
-├── main.py          # Main application
-├── contributing.md   # Contributing guide
-├── main.py.md       # Main app documentation
-├── websocket.md     # WebSocket documentation
-└── README.md        # This file
+│   ├── core/              # Core configuration
+│   └── tools/             # Assistant tools
+│       ├── weather.py     # Weather information tool
+│       ├── kmc_active_clients.py  # KMC client analytics tool
+│       ├── registry.py    # Tool registration system
+│       └── base.py        # Base tool classes
+├── main.py               # Main application
+├── contributing.md       # Contributing guide
+├── main.py.md           # Main app documentation
+├── websocket.md         # WebSocket documentation
+└── README.md            # This file
 ```
 
 ## Development
@@ -96,10 +117,10 @@ For development guidelines and how to extend the assistant's capabilities, pleas
 ## Error Handling
 
 The application includes comprehensive error handling:
-- Connection errors
-- API failures
+- Connection errors (WebSocket, Database, API)
+- Query execution errors
 - Tool execution errors
-- WebSocket communication issues
+- Message processing errors
 
 All errors are logged and streamed through WebSocket with appropriate status codes.
 
@@ -109,6 +130,7 @@ All errors are logged and streamed through WebSocket with appropriate status cod
    - Follow the guidelines in [contributing.md](contributing.md)
    - Maintain consistent error handling
    - Include proper documentation
+   - Use specific, focused tool names
 
 2. **WebSocket Communication**
    - Follow the message format in [websocket.md](websocket.md)
