@@ -272,7 +272,7 @@ def run_conversation():
         thread = create_thread()
         print(f"\nCreated thread: {thread.id}")
         
-        message = create_message(thread.id, "How many active clients does KMC currently have? Per service type?")
+        message = create_message(thread.id, "Which sites have available spaces for 30 people within Makati and nearby cities?")
         print(f"Created message: {message.id}")
         
         print("\nStarting conversation stream...")
