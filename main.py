@@ -97,6 +97,7 @@ ws_manager = WebSocketManager(WEBSOCKET_URI, WEBSOCKET_CHANNEL)
 weather_tool = WeatherTool(settings.OPENWEATHER_API_KEY)
 active_clients_tool = KMCActiveClientsTool()
 available_offices_tool = KMCAvailableOfficesTool()
+
 registry.register(weather_tool)
 registry.register(active_clients_tool)
 registry.register(available_offices_tool)
