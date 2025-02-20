@@ -9,12 +9,14 @@ RUN apt-get update && apt-get install -y \
     gnupg \
     unixodbc \
     unixodbc-dev \
-    apt-transport-https && \
-    curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add - && \
-    curl https://packages.microsoft.com/config/debian/11/prod.list > /etc/apt/sources.list.d/mssql-release.list && \
+    apt-transport-https \
+    libssl3  # Use libssl3 instead of libssl1.1
+
+# Add Microsoft repository and install the ODBC Driver
+RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | tee /etc/apt/trusted.gpg.d/microsoft.asc > /dev/null && \
+    curl -fsSL https://packages.microsoft.com/config/debian/11/prod.list | tee /etc/apt/sources.list.d/mssql-release.list > /dev/null && \
     apt-get update && ACCEPT_EULA=Y apt-get install -y \
-    msodbcsql18 \
-    libssl1.1
+    msodbcsql18
 
 # Copy requirements and install dependencies
 COPY requirements.txt .
