@@ -16,6 +16,7 @@ client = OpenAI(api_key=settings.OPENAI_API_KEY)
 WEBSOCKET_URI = settings.WEBSOCKET_URI
 WEBSOCKET_CHANNEL = settings.WEBSOCKET_CHANNEL
 
+
 class WebSocketManager:
     def __init__(self, uri, channel):
         self.uri = uri
@@ -33,22 +34,20 @@ class WebSocketManager:
             # Subscribe to the channel
             subscribe_message = {
                 "type": "subscribe",
-                "payload": {
-                    "channel": self.channel
-                }
+                "payload": {"channel": self.channel},
             }
             await self.websocket.send(json.dumps(subscribe_message))
-            
+
             # Wait for subscription confirmation
             response = await self.websocket.recv()
             response_data = json.loads(response)
-            
+
             if response_data.get("type") == "subscribed":
                 self.is_subscribed = True
                 print(f"\nSuccessfully subscribed to channel: {self.channel}")
             else:
                 print(f"\nFailed to subscribe to channel: {self.channel}")
-                
+
         except Exception as e:
             print(f"\nError connecting to WebSocket: {str(e)}")
             self.websocket = None
@@ -56,10 +55,7 @@ class WebSocketManager:
     async def send_message(self, message_data):
         if self.websocket and self.is_subscribed:
             try:
-                message = {
-                    "type": self.channel,
-                    "payload": message_data
-                }
+                message = {"type": self.channel, "payload": message_data}
                 print(f"\nAttempting to send message: {json.dumps(message)}")
                 await self.websocket.send(json.dumps(message))
                 print(f"\nMessage sent successfully")
@@ -71,24 +67,23 @@ class WebSocketManager:
             try:
                 unsubscribe_message = {
                     "type": "unsubscribe",
-                    "payload": {
-                        "channel": self.channel
-                    }
+                    "payload": {"channel": self.channel},
                 }
                 await self.websocket.send(json.dumps(unsubscribe_message))
-                
+
                 # Wait for unsubscribe confirmation
                 response = await self.websocket.recv()
                 response_data = json.loads(response)
-                
+
                 if response_data.get("type") == "unsubscribed":
                     self.is_subscribed = False
                     print(f"\nSuccessfully unsubscribed from channel: {self.channel}")
-                
+
                 await self.websocket.close()
-                
+
             except Exception as e:
                 print(f"\nError disconnecting from WebSocket: {str(e)}")
+
 
 # Initialize WebSocket manager
 ws_manager = WebSocketManager(WEBSOCKET_URI, WEBSOCKET_CHANNEL)
@@ -170,11 +165,16 @@ assistant = client.beta.assistants.create(
     """,
 )
 
+
 def create_thread():
     return client.beta.threads.create()
 
+
 def create_message(thread_id, message):
-   return client.beta.threads.messages.create(thread_id=thread_id, role="user", content=message)
+    return client.beta.threads.messages.create(
+        thread_id=thread_id, role="user", content=message
+    )
+
 
 class MyEventHandler(AssistantEventHandler):
     def __init__(self, websocket_manager, loop=None):
@@ -191,31 +191,35 @@ class MyEventHandler(AssistantEventHandler):
 
     def on_event(self, event):
         print(f"\nReceived event: {event.event}")  # Debug print
-        
-        if event.event == 'thread.run.requires_action':
+
+        if event.event == "thread.run.requires_action":
             self.current_thread_id = event.data.thread_id
             self.current_run_id = event.data.id
             self.handle_tool_calls(event.data)
-        elif event.event == 'thread.message.delta':
-            time.sleep(0.05) # delay to allow the message to be sent
-            if hasattr(event.data.delta, 'content') and event.data.delta.content:
+        elif event.event == "thread.message.delta":
+            time.sleep(0.05)  # delay to allow the message to be sent
+            if hasattr(event.data.delta, "content") and event.data.delta.content:
                 content = event.data.delta.content[0].text.value
                 self.message_content += content
-                
+
                 message_data = {
                     "message": self.message_content,
                     "timestamp": time.time(),
-                    "status": "in_progress"
+                    "status": "in_progress",
                 }
-                
+
                 if self.loop:
-                    print(f"\nSending message via WebSocket: {json.dumps(message_data)}")
-                    self.loop.run_until_complete(self.ws_manager.send_message(message_data))
+                    print(
+                        f"\nSending message via WebSocket: {json.dumps(message_data)}"
+                    )
+                    self.loop.run_until_complete(
+                        self.ws_manager.send_message(message_data)
+                    )
                 else:
                     print("\nWarning: No event loop available for WebSocket message")
 
-        elif event.event == 'thread.message.completed':
-            if hasattr(event.data, 'content') and event.data.content:
+        elif event.event == "thread.message.completed":
+            if hasattr(event.data, "content") and event.data.content:
                 print("\nMessage completed, sending final message")
                 if self.loop:
                     final_message = {
@@ -223,11 +227,13 @@ class MyEventHandler(AssistantEventHandler):
                         "timestamp": time.time(),
                         "status": "completed",
                     }
-                    self.loop.run_until_complete(self.ws_manager.send_message(final_message))
+                    self.loop.run_until_complete(
+                        self.ws_manager.send_message(final_message)
+                    )
                 else:
                     print("\nWarning: No event loop available for final message")
 
-        elif event.event == 'thread.run.completed':
+        elif event.event == "thread.run.completed":
             print("\nRun completed deleting assistant.")
             client.beta.assistants.delete(assistant.id)
             self.is_complete = True
@@ -237,24 +243,30 @@ class MyEventHandler(AssistantEventHandler):
         for tool in data.required_action.submit_tool_outputs.tool_calls:
             try:
                 arguments = json.loads(tool.function.arguments)
-                print(f"\nExecuting function: {tool.function.name} with arguments: {arguments}")
-                
+                print(
+                    f"\nExecuting function: {tool.function.name} with arguments: {arguments}"
+                )
+
                 result = self.loop.run_until_complete(
                     registry.execute_function(tool.function.name, arguments)
                 )
                 print(f"Function result: {result}")
-                
-                tool_outputs.append({
-                    "tool_call_id": tool.id,
-                    "output": json.dumps(result) if result is not None else "null"
-                })
+
+                tool_outputs.append(
+                    {
+                        "tool_call_id": tool.id,
+                        "output": json.dumps(result) if result is not None else "null",
+                    }
+                )
             except Exception as e:
                 print(f"Error executing function: {str(e)}")
-                tool_outputs.append({
-                    "tool_call_id": tool.id,
-                    "output": f"Error executing function: {str(e)}"
-                })
-        
+                tool_outputs.append(
+                    {
+                        "tool_call_id": tool.id,
+                        "output": f"Error executing function: {str(e)}",
+                    }
+                )
+
         print("\nSubmitting tool outputs:", tool_outputs)
         self.submit_tool_outputs(tool_outputs)
 
@@ -263,7 +275,7 @@ class MyEventHandler(AssistantEventHandler):
             if self.current_thread_id and self.current_run_id:
                 # Create new event handler with the same loop
                 new_handler = MyEventHandler(self.ws_manager, self.loop)
-                
+
                 with client.beta.threads.runs.submit_tool_outputs_stream(
                     thread_id=self.current_thread_id,
                     run_id=self.current_run_id,
@@ -286,33 +298,38 @@ class MyEventHandler(AssistantEventHandler):
                     "friendly_message": str(error),
                     "timestamp": time.time(),
                     "status": "error",
-                    "type": "error"
+                    "type": "error",
                 }
-                print(f"\nSending error message to WebSocket: {json.dumps(error_message)}")
-                self.loop.run_until_complete(self.ws_manager.send_message(error_message))
+                print(
+                    f"\nSending error message to WebSocket: {json.dumps(error_message)}"
+                )
+                self.loop.run_until_complete(
+                    self.ws_manager.send_message(error_message)
+                )
             except Exception as e:
                 print(f"\nError sending error message to WebSocket: {str(e)}")
+
 
 def run_conversation():
     # Create and initialize event loop
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    
+
     # Initialize event handler with WebSocket manager and loop
     event_handler = MyEventHandler(ws_manager, loop)
-    
+
     try:
         # Initialize WebSocket connection
         loop.run_until_complete(ws_manager.connect())
-        
+
         thread = create_thread()
         print(f"\nCreated thread: {thread.id}")
-        
+
         message = create_message(thread.id, "Who are you?")
         print(f"Created message: {message.id}")
-        
+
         print("\nStarting conversation stream...")
-        
+
         # Create and stream the run
         with client.beta.threads.runs.stream(
             thread_id=thread.id,
@@ -321,7 +338,7 @@ def run_conversation():
         ) as stream:
             # The run ID will be available in the event handler after the first event
             stream.until_done()
-            
+
     except Exception as e:
         print(f"\nError in conversation: {str(e)}")
     finally:
@@ -329,6 +346,7 @@ def run_conversation():
         if loop:
             loop.run_until_complete(ws_manager.disconnect())
             loop.close()
+
 
 if __name__ == "__main__":
     run_conversation()
