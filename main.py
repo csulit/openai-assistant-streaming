@@ -307,7 +307,7 @@ def run_conversation():
         thread = create_thread()
         print(f"\nCreated thread: {thread.id}")
         
-        message = create_message(thread.id, "Which sites have available spaces for 30 people within Taguig and nearby cities?")
+        message = create_message(thread.id, "Who are you?")
         print(f"Created message: {message.id}")
         
         print("\nStarting conversation stream...")
