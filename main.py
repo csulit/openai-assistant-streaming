@@ -204,15 +204,6 @@ def process_message(message_data: dict, properties=None) -> tuple[bool, bool, st
             logger.error(error_msg)
             return False, False, error_msg
 
-        # Validate channel values
-        valid_channels = {"weather-update", "business-update", "sales-update"}
-        if channel not in valid_channels:
-            error_msg = (
-                f"Invalid channel value: {channel}. Must be one of {valid_channels}"
-            )
-            logger.error(error_msg)
-            return False, False, error_msg
-
         # Run the conversation
         conversation_success, error_msg = run_conversation(
             message=user_message, channel=channel, properties=properties
