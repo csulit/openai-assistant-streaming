@@ -14,6 +14,7 @@ from app.tools.registry import registry
 from app.tools.weather import WeatherTool
 from app.tools.kmc_active_clients import KMCActiveClientsTool
 from app.tools.kmc_available_offices import KMCAvailableOfficesTool
+import threading
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -24,6 +25,9 @@ RABBITMQ_URL = settings.RABBITMQ_URL
 QUEUE_NAME = settings.QUEUE_NAME
 ROUTING_KEY = settings.ROUTING_KEY
 EXCHANGE_NAME = settings.EXCHANGE_NAME
+
+# Add this at the top level with other globals
+conversation_lock = threading.Lock()
 
 
 def initialize_tools():
@@ -59,93 +63,174 @@ def timeout(seconds: int):
 
 def run_conversation(
     message: str,
-    channel: str = "weather-update",
-) -> bool:
+    channel: str,
+    properties=None,
+) -> tuple[bool, str]:
     """Run the main conversation loop
 
     Args:
         message (str): The user's message to start the conversation
         channel (str): The WebSocket channel to use for communication
+        properties: RabbitMQ message properties for potential reply handling
 
     Returns:
-        bool: True if conversation completed successfully, False otherwise
+        tuple[bool, str]: (success, error_message)
+        - success: True if conversation completed successfully
+        - error_message: Description of error if any, empty string if successful
     """
-    # Create and initialize event loop
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    # Try to acquire the lock, return if already running
+    if not conversation_lock.acquire(blocking=False):
+        error_msg = "Another conversation is already in progress"
+        logger.warning(error_msg)
+        return False, error_msg
 
     try:
-        # Initialize services
-        openai_service = OpenAIService()
-        websocket_service = WebSocketService()
+        # Create and initialize event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
 
-        # Initialize tools
-        function_definitions = initialize_tools()
+        try:
+            # Initialize services
+            openai_service = OpenAIService()
+            websocket_service = WebSocketService()
 
-        # Initialize WebSocket connection and subscribe to channel
-        loop.run_until_complete(websocket_service.connect())
-        loop.run_until_complete(websocket_service.subscribe(channel))
+            # Initialize tools
+            function_definitions = initialize_tools()
 
-        # Initialize event handler with both services and channel
-        event_handler = CosmoEventHandler(
-            websocket_service, openai_service, channel, loop
-        )
+            # Initialize WebSocket connection and subscribe to channel
+            try:
+                loop.run_until_complete(websocket_service.connect())
+            except Exception as e:
+                error_msg = f"Failed to connect to WebSocket server: {str(e)}"
+                logger.error(error_msg)
+                return False, error_msg
 
-        # Create assistant
-        assistant = openai_service.create_assistant(function_definitions)
+            try:
+                loop.run_until_complete(websocket_service.subscribe(channel))
+            except Exception as e:
+                error_msg = (
+                    f"Failed to subscribe to WebSocket channel {channel}: {str(e)}"
+                )
+                logger.error(error_msg)
+                return False, error_msg
 
-        # Create conversation thread
-        thread = openai_service.create_thread()
-        logger.info(f"Created thread: {thread.id}")
+            # Initialize event handler with both services and channel
+            event_handler = CosmoEventHandler(
+                websocket_service, openai_service, channel, loop
+            )
 
-        # Create message with user's input
-        message = openai_service.create_message(thread.id, message)
-        logger.info(f"Created message: {message.id}")
+            # Create assistant
+            assistant = openai_service.create_assistant(function_definitions)
 
-        # Start conversation stream
-        logger.info("Starting conversation stream...")
-        openai_service.stream_conversation(
-            thread_id=thread.id, assistant_id=assistant.id, event_handler=event_handler
-        )
+            # Create conversation thread
+            thread = openai_service.create_thread()
+            logger.info(f"Created thread: {thread.id}")
 
-        return True
+            # Create message with user's input
+            message = openai_service.create_message(thread.id, message)
+            logger.info(f"Created message: {message.id}")
 
-    except Exception as e:
-        logger.error(f"Error in conversation: {str(e)}")
-        return False
+            # Start conversation stream
+            logger.info("Starting conversation stream...")
+            openai_service.stream_conversation(
+                thread_id=thread.id,
+                assistant_id=assistant.id,
+                event_handler=event_handler,
+            )
+
+            # Wait for completion or timeout
+            start_time = time.time()
+            while not event_handler.is_complete:
+                if (
+                    time.time() - start_time > 25
+                ):  # 25 second timeout (less than the 30s global timeout)
+                    raise TimeoutError("Conversation timed out waiting for completion")
+                time.sleep(0.1)  # Small sleep to prevent CPU spinning
+
+            logger.info("Conversation completed successfully")
+            return True, ""
+
+        except TimeoutError as e:
+            error_msg = str(e)
+            logger.error(error_msg)
+            return False, error_msg
+        except Exception as e:
+            error_msg = f"Error in conversation: {str(e)}"
+            logger.error(error_msg)
+            return False, error_msg
+        finally:
+            # Cleanup
+            if "assistant" in locals():
+                openai_service.delete_assistant(assistant.id)
+            if loop:
+                loop.run_until_complete(websocket_service.disconnect())
+                loop.close()
+
     finally:
-        # Cleanup
-        if "assistant" in locals():
-            openai_service.delete_assistant(assistant.id)
-        if loop:
-            loop.run_until_complete(websocket_service.disconnect())
-            loop.close()
+        # Always release the lock
+        conversation_lock.release()
 
 
-def process_message(message_data: dict) -> bool:
+def process_message(message_data: dict, properties=None) -> tuple[bool, bool, str]:
     """Process a message from RabbitMQ
 
     Args:
         message_data (dict): The message data from RabbitMQ
+        properties: RabbitMQ message properties
 
     Returns:
-        bool: True if processed successfully, False otherwise
+        tuple[bool, bool, str]: (success, should_requeue, error_message)
+        - success: True if processed successfully
+        - should_requeue: True if message should be requeued on failure
+        - error_message: Description of error if any, empty string if successful
     """
     try:
         # Extract required fields from message_data
         user_message = message_data.get("message")
-        channel = message_data.get("channel", "weather-update")
+        if not isinstance(user_message, str):
+            error_msg = "Invalid or missing 'message' field"
+            logger.error(error_msg)
+            return False, False, error_msg
 
-        if not user_message:
-            logger.error("No message found in RabbitMQ data")
-            return False
+        # Validate channel (now required)
+        channel = message_data.get("channel")
+        if not channel:
+            error_msg = "Missing required 'channel' field"
+            logger.error(error_msg)
+            return False, False, error_msg
+
+        if not isinstance(channel, str):
+            error_msg = "Invalid 'channel' field"
+            logger.error(error_msg)
+            return False, False, error_msg
+
+        # Validate channel values
+        valid_channels = {"weather-update", "business-update", "sales-update"}
+        if channel not in valid_channels:
+            error_msg = (
+                f"Invalid channel value: {channel}. Must be one of {valid_channels}"
+            )
+            logger.error(error_msg)
+            return False, False, error_msg
 
         # Run the conversation
-        return run_conversation(message=user_message, channel=channel)
+        conversation_success, error_msg = run_conversation(
+            message=user_message, channel=channel, properties=properties
+        )
+        return (
+            conversation_success,
+            True,
+            error_msg,
+        )  # Only requeue if it's a processing error
 
+    except json.JSONDecodeError as e:
+        error_msg = f"Invalid JSON format: {str(e)}"
+        logger.error(error_msg)
+        return False, False, error_msg
     except Exception as e:
-        logger.error(f"Error processing message: {str(e)}")
-        return False
+        error_msg = f"Error processing message: {str(e)}"
+        logger.error(error_msg)
+        return False, True, error_msg  # Requeue on unexpected errors
 
 
 def main():
@@ -175,34 +260,112 @@ def main():
                 try:
                     # Process message with timeout
                     with timeout(30):  # 30 seconds timeout
-                        message_data = json.loads(body)
-                        if process_message(message_data):
-                            ch.basic_ack(delivery_tag=method.delivery_tag)
-                        else:
-                            ch.basic_nack(
-                                delivery_tag=method.delivery_tag, requeue=True
+                        try:
+                            message_data = json.loads(body)
+                        except json.JSONDecodeError as e:
+                            error_msg = f"Failed to parse message JSON: {str(e)}"
+                            logger.error(error_msg)
+
+                            # Send error response if reply_to is provided
+                            if properties.reply_to:
+                                error_response = {"success": False, "error": error_msg}
+                                ch.basic_publish(
+                                    exchange="",
+                                    routing_key=properties.reply_to,
+                                    body=json.dumps(error_response),
+                                )
+
+                            # Reject and don't requeue invalid JSON
+                            ch.basic_reject(
+                                delivery_tag=method.delivery_tag, requeue=False
                             )
+                            return
+
+                        success, should_requeue, error_msg = process_message(
+                            message_data, properties
+                        )
+
+                        # Send response if reply_to is provided
+                        if properties.reply_to:
+                            response = {
+                                "success": success,
+                                "error": error_msg if not success else "",
+                            }
+                            ch.basic_publish(
+                                exchange="",
+                                routing_key=properties.reply_to,
+                                body=json.dumps(response),
+                            )
+
+                        if success:
+                            # Message processed successfully
+                            ch.basic_ack(delivery_tag=method.delivery_tag)
+                            logger.info(
+                                "✓ Message processed successfully and acknowledged"
+                            )
+                        else:
+                            # Message processing failed
+                            if should_requeue:
+                                # Requeue only if it's a processing error
+                                logger.warning(
+                                    f"Processing failed: {error_msg}, requeuing message"
+                                )
+                                ch.basic_nack(
+                                    delivery_tag=method.delivery_tag, requeue=True
+                                )
+                            else:
+                                # Reject and don't requeue if it's an invalid message
+                                logger.error(
+                                    f"Invalid message: {error_msg}, discarding message"
+                                )
+                                ch.basic_reject(
+                                    delivery_tag=method.delivery_tag, requeue=False
+                                )
+
                 except TimeoutError:
-                    logger.warning("⌛ Processing timed out, requeuing")
+                    error_msg = "Processing timed out"
+                    logger.warning(f"⌛ {error_msg}, requeuing")
+
+                    # Send timeout error response if reply_to is provided
+                    if properties.reply_to:
+                        error_response = {"success": False, "error": error_msg}
+                        ch.basic_publish(
+                            exchange="",
+                            routing_key=properties.reply_to,
+                            body=json.dumps(error_response),
+                        )
+
                     ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
                 except Exception as e:
-                    logger.error(f"Error processing message: {e}")
+                    error_msg = f"Unexpected error in callback: {e}"
+                    logger.error(error_msg)
+
+                    # Send error response if reply_to is provided
+                    if properties.reply_to:
+                        error_response = {"success": False, "error": error_msg}
+                        ch.basic_publish(
+                            exchange="",
+                            routing_key=properties.reply_to,
+                            body=json.dumps(error_response),
+                        )
+
+                    # Requeue on unexpected errors
                     ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
 
-            # Set up consumer
+            # Set up consumer with prefetch count of 1 to ensure one message at a time
             channel.basic_qos(prefetch_count=1)
             channel.basic_consume(
                 queue=queue_name, on_message_callback=callback, auto_ack=False
             )
 
-            logger.info("[*] Waiting for messages...")
+            logger.info("[*] Waiting for messages. To exit press CTRL+C")
             channel.start_consuming()
 
         except pika.exceptions.AMQPConnectionError:
             logger.error("Connection lost, reconnecting...")
             time.sleep(5)
         except KeyboardInterrupt:
-            logger.info("Consumer stopped")
+            logger.info("Consumer stopped by user")
             break
         finally:
             if connection and connection.is_open:
