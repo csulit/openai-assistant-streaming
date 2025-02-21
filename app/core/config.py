@@ -17,7 +17,6 @@ class Settings(BaseSettings):
 
     # WebSocket settings
     WEBSOCKET_URI: str = "wss://erp-v2-cosmo-socket.kmc.solutions/"
-    WEBSOCKET_CHANNEL: str = "weather-update"
 
     # Database settings
     MSSQL_CONNECTION_STRING: str
