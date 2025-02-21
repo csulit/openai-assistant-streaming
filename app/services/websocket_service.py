@@ -1,5 +1,6 @@
 import json
 import time
+import asyncio
 import websockets
 import logging
 from typing import Dict, Any, Optional, Set
@@ -14,6 +15,9 @@ class WebSocketService:
         self.websocket = None
         self.subscribed_channels: Set[str] = set()
         self.loop = None
+        self.max_retries = 3
+        self.retry_delay = 1  # seconds
+        self.subscription_timeout = 5  # seconds
 
     def set_loop(self, loop):
         """Set the event loop for async operations"""
@@ -21,33 +25,43 @@ class WebSocketService:
 
     async def connect(self):
         """Connect to the WebSocket server"""
-        try:
-            self.websocket = await websockets.connect(self.uri)
-            logger.info("Successfully connected to WebSocket server")
-        except Exception as e:
-            logger.error(f"Error connecting to WebSocket: {str(e)}")
-            self.websocket = None
-            raise
+        retries = 0
+        while retries < self.max_retries:
+            try:
+                self.websocket = await websockets.connect(self.uri)
+                logger.info("Successfully connected to WebSocket server")
+                return
+            except Exception as e:
+                retries += 1
+                if retries == self.max_retries:
+                    logger.error(
+                        f"Failed to connect after {self.max_retries} attempts: {str(e)}"
+                    )
+                    self.websocket = None
+                    raise
+                logger.warning(
+                    f"Connection attempt {retries} failed, retrying in {self.retry_delay} seconds..."
+                )
+                await asyncio.sleep(self.retry_delay)
 
     async def subscribe(self, channel: str):
-        """Subscribe to a specific channel"""
+        """Subscribe to a specific channel with retries"""
         if not self.websocket:
             raise ValueError("WebSocket not connected")
 
         try:
-            subscribe_message = {"type": "subscribe", "payload": {"channel": channel}}
+            # Exactly match the required subscription format
+            subscribe_message = {
+                "channel": "subscription",
+                "payload": {"action": "subscribe", "channel": channel},
+            }
             await self.websocket.send(json.dumps(subscribe_message))
 
-            # Wait for subscription confirmation
-            response = await self.websocket.recv()
-            response_data = json.loads(response)
-
-            if response_data.get("type") == "subscribed":
-                self.subscribed_channels.add(channel)
-                logger.info(f"Successfully subscribed to channel: {channel}")
-            else:
-                logger.error(f"Failed to subscribe to channel: {channel}")
-                raise ValueError(f"Failed to subscribe to channel: {channel}")
+            # Add to subscribed channels immediately
+            # The server logs show it accepts subscriptions right away
+            self.subscribed_channels.add(channel)
+            logger.info(f"Successfully subscribed to channel: {channel}")
+            return
 
         except Exception as e:
             logger.error(f"Error subscribing to channel {channel}: {str(e)}")
@@ -59,14 +73,15 @@ class WebSocketService:
             return
 
         try:
+            # Exactly match the required unsubscription format
             unsubscribe_message = {
-                "type": "unsubscribe",
-                "payload": {"channel": channel},
+                "channel": "subscription",
+                "payload": {"action": "unsubscribe", "channel": channel},
             }
             await self.websocket.send(json.dumps(unsubscribe_message))
 
             # Remove from subscribed channels immediately
-            self.subscribed_channels.remove(channel)
+            self.subscribed_channels.discard(channel)
             logger.info(f"Unsubscribed from channel: {channel}")
 
         except Exception as e:
@@ -75,21 +90,32 @@ class WebSocketService:
             self.subscribed_channels.discard(channel)
 
     async def send_message(self, channel: str, message_data: Dict[str, Any]):
-        """Send a message to a specific channel"""
+        """Send a message to a specific channel with retries"""
         if not self.websocket:
             raise ValueError("WebSocket not connected")
 
         if channel not in self.subscribed_channels:
             raise ValueError(f"Not subscribed to channel: {channel}")
 
-        try:
-            message = {"type": channel, "payload": message_data}
-            logger.debug(f"Sending message to channel {channel}: {json.dumps(message)}")
-            await self.websocket.send(json.dumps(message))
-            logger.debug(f"Message sent successfully to channel: {channel}")
-        except Exception as e:
-            logger.error(f"Error sending message to channel {channel}: {str(e)}")
-            raise
+        retries = 0
+        while retries < self.max_retries:
+            try:
+                # Exactly match the required broadcast format
+                message = {"channel": channel, "payload": message_data}
+                await self.websocket.send(json.dumps(message))
+                logger.debug(f"Message sent successfully to channel: {channel}")
+                return
+            except Exception as e:
+                retries += 1
+                if retries == self.max_retries:
+                    logger.error(
+                        f"Failed to send message after {self.max_retries} attempts: {str(e)}"
+                    )
+                    raise
+                logger.warning(
+                    f"Send attempt {retries} failed, retrying in {self.retry_delay} seconds..."
+                )
+                await asyncio.sleep(self.retry_delay)
 
     async def send_error(
         self, channel: str, error: Exception, friendly_message: Optional[str] = None
@@ -113,8 +139,8 @@ class WebSocketService:
                 for channel in list(self.subscribed_channels):
                     try:
                         unsubscribe_message = {
-                            "type": "unsubscribe",
-                            "payload": {"channel": channel},
+                            "channel": "subscription",
+                            "payload": {"action": "unsubscribe", "channel": channel},
                         }
                         await self.websocket.send(json.dumps(unsubscribe_message))
                     except Exception as e:

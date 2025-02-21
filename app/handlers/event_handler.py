@@ -52,6 +52,7 @@ class CosmoEventHandler(AssistantEventHandler):
                     "message": self.message_content,
                     "timestamp": time.time(),
                     "status": "in_progress",
+                    "type": "response",
                 }
 
                 if self.loop:
@@ -72,6 +73,7 @@ class CosmoEventHandler(AssistantEventHandler):
                         "message": self.message_content,
                         "timestamp": time.time(),
                         "status": "completed",
+                        "type": "response",
                     }
                     self.loop.run_until_complete(
                         self.ws_service.send_message(self.channel, final_message)
@@ -93,10 +95,34 @@ class CosmoEventHandler(AssistantEventHandler):
                     f"Executing function: {tool.function.name} with arguments: {arguments}"
                 )
 
+                # Send tool execution start message
+                start_message = {
+                    "message": f"Executing {tool.function.name}",
+                    "timestamp": time.time(),
+                    "status": "started",
+                    "type": "tool",
+                }
+                if self.loop:
+                    self.loop.run_until_complete(
+                        self.ws_service.send_message(self.channel, start_message)
+                    )
+
                 result = self.loop.run_until_complete(
                     registry.execute_function(tool.function.name, arguments)
                 )
                 logger.debug(f"Function result: {result}")
+
+                # Send tool execution complete message
+                complete_message = {
+                    "message": json.dumps(result) if result is not None else "null",
+                    "timestamp": time.time(),
+                    "status": "completed",
+                    "type": "tool",
+                }
+                if self.loop:
+                    self.loop.run_until_complete(
+                        self.ws_service.send_message(self.channel, complete_message)
+                    )
 
                 tool_outputs.append(
                     {
@@ -106,6 +132,18 @@ class CosmoEventHandler(AssistantEventHandler):
                 )
             except Exception as e:
                 logger.error(f"Error executing function: {str(e)}")
+                # Send error message
+                error_message = {
+                    "message": f"Error executing {tool.function.name}: {str(e)}",
+                    "timestamp": time.time(),
+                    "status": "error",
+                    "type": "tool",
+                }
+                if self.loop:
+                    self.loop.run_until_complete(
+                        self.ws_service.send_message(self.channel, error_message)
+                    )
+
                 tool_outputs.append(
                     {
                         "tool_call_id": tool.id,
