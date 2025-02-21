@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     # Database settings
     MSSQL_CONNECTION_STRING: str
 
+    # RabbitMQ settings
+    RABBITMQ_URL: str = "amqp://guest:guest@localhost:5672/"
+    QUEUE_NAME: str = "cosmo_queue"
+    ROUTING_KEY: str = "cosmo.message"
+    EXCHANGE_NAME: str = "malcolm"
+
     # Environment settings
     NODE_ENV: str = "development"
 
@@ -41,6 +47,7 @@ class Settings(BaseSettings):
         print(
             f"Database connection configured: {'Yes' if self.MSSQL_CONNECTION_STRING else 'No'}"
         )
+        print(f"RabbitMQ URL configured: {'Yes' if self.RABBITMQ_URL else 'No'}")
 
 
 settings = Settings()
