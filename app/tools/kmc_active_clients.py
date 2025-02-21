@@ -6,9 +6,10 @@ from .base import BaseAssistantTool
 
 logger = logging.getLogger(__name__)
 
+
 class KMCActiveClientsTool(BaseAssistantTool):
     """Tool for getting KMC's active client information per service type"""
-    
+
     def __init__(self):
         logger.info("Initializing KMCActiveClientsTool")
         self.connection_string = settings.MSSQL_CONNECTION_STRING
@@ -32,38 +33,47 @@ class KMCActiveClientsTool(BaseAssistantTool):
             "parameters": {
                 "type": "object",
                 "properties": {},  # No parameters needed as the query is fixed
-                "required": []
-            }
+                "required": [],
+            },
         }
 
     async def get_active_clients_per_service(self) -> Dict[str, Any]:
         """Get active client count per service type"""
         logger.info("Querying active client count per service type")
-        
+
         try:
             with pyodbc.connect(self.connection_string) as conn:
                 cursor = conn.cursor()
-                query = "SELECT * FROM vw_ClientCountPerService ORDER BY ClientCount DESC"
+                query = (
+                    "SELECT * FROM vw_ClientCountPerService ORDER BY ClientCount DESC"
+                )
                 cursor.execute(query)
-                
+
                 # Convert the results to a list of dictionaries
                 columns = [column[0] for column in cursor.description]
                 results = []
                 for row in cursor.fetchall():
                     results.append(dict(zip(columns, row)))
-                
+
                 # Format the response
                 response = {
-                    "total_active_clients": sum(row['ClientCount'] for row in results),
-                    "service_breakdown": results
+                    "total_active_clients": sum(row["ClientCount"] for row in results),
+                    "service_breakdown": results,
                 }
-                
-                logger.info(f"Successfully retrieved active client data. Total clients: {response['total_active_clients']}")
+
+                logger.info(
+                    f"Successfully retrieved active client data. Total clients: {response['total_active_clients']}"
+                )
                 return response
-                
+
         except pyodbc.Error as e:
-            logger.error(f"Database error occurred while fetching active clients: {str(e)}")
+            logger.error(
+                f"Database error occurred while fetching active clients: {str(e)}"
+            )
             raise ValueError(f"Database query failed: {str(e)}")
         except Exception as e:
-            logger.error(f"Unexpected error in get_active_clients_per_service: {str(e)}", exc_info=True)
-            raise ValueError(f"Error getting active client data: {str(e)}") 
+            logger.error(
+                f"Unexpected error in get_active_clients_per_service: {str(e)}",
+                exc_info=True,
+            )
+            raise ValueError(f"Error getting active client data: {str(e)}")
