@@ -92,4 +92,4 @@ if __name__ == "__main__":
         "How many active clients does KMC currently have? Per service type?"
     )
 
-    run_conversation(message=sample_message)
+    run_conversation(message=sample_message, channel="trd_1234567890")

@@ -99,11 +99,12 @@ The project follows a modular, service-based architecture:
 1. **WebSocket Messages**:
    ```json
    {
-       "type": "channel-name",
+       "channel": "channel-name",
        "payload": {
            "message": "content",
            "timestamp": 1234567890,
-           "status": "in_progress|completed|error"
+           "status": "in_progress|completed|error",
+           "type": "response|error|tool"
        }
    }
    ```
