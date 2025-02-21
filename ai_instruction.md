@@ -2,7 +2,28 @@
 
 ## Project Overview
 
-Cosmo is a specialized professional assistant for KMC Solutions that combines weather expertise, business analytics, and office space consulting. The project uses OpenAI's Assistant API with WebSocket integration for real-time updates and follows a strict architectural pattern.
+Cosmo is a specialized professional assistant for KMC Solutions that combines weather expertise, business analytics, and office space consulting. The project uses OpenAI's Assistant API with WebSocket integration for real-time updates and follows a service-based architecture pattern.
+
+## Architecture Overview
+
+The project follows a modular, service-based architecture:
+
+1. **Services Layer** (`app/services/`):
+   - `openai_service.py`: Manages OpenAI assistant interactions
+   - `websocket_service.py`: Handles multi-channel WebSocket communications
+
+2. **Tools Layer** (`app/tools/`):
+   - `weather.py`: Weather information functionality
+   - `kmc_active_clients.py`: Client analytics functionality
+   - `kmc_available_offices.py`: Office space availability functionality
+   - `registry.py`: Tool registration and management
+   - `base.py`: Base classes and interfaces
+
+3. **Handlers Layer** (`app/handlers/`):
+   - `event_handler.py`: Manages event processing and tool execution
+
+4. **Core Layer** (`app/core/`):
+   - `config.py`: Application configuration and settings
 
 ## Core Principles
 
@@ -12,178 +33,175 @@ Cosmo is a specialized professional assistant for KMC Solutions that combines we
    - Business/Sales queries: Maintain professional, consultative tone
    - Always maintain appropriate persona per query type
 
-2. **Real-time Communication**:
-   - All responses must be streamed via WebSocket
-   - Follow established message format and protocols
-   - Maintain proper error handling and status updates
+2. **Service-Based Communication**:
+   - All responses streamed via WebSocket
+   - Channel-specific message handling
+   - Proper subscription management
+   - Comprehensive error handling
 
 3. **Code Structure**:
-   - Follow modular architecture
-   - Maintain separation of concerns
-   - Keep configuration in settings
+   - Service-oriented architecture
+   - Clear separation of concerns
+   - Modular tool implementation
+   - Centralized configuration
+
+## Service Development Guidelines
+
+1. **OpenAI Service**:
+   ```python
+   class OpenAIService:
+       def create_assistant(self, function_definitions):
+           # Assistant creation and management
+       
+       def stream_conversation(self, thread_id, assistant_id, event_handler):
+           # Conversation streaming
+   ```
+
+2. **WebSocket Service**:
+   ```python
+   class WebSocketService:
+       def subscribe(self, channel: str):
+           # Channel subscription
+       
+       def send_message(self, channel: str, message_data: Dict):
+           # Channel-specific message sending
+   ```
+
+3. **Event Handler**:
+   ```python
+   class CosmoEventHandler:
+       def on_event(self, event):
+           # Event processing
+       
+       def handle_tool_calls(self, data):
+           # Tool execution management
+   ```
 
 ## Tool Development Guidelines
 
-When creating or modifying tools:
-
 1. **Naming Conventions**:
    - Use specific, focused file names (e.g., `kmc_active_clients.py`)
-   - Avoid generic names (e.g., 'sales.py', 'utils.py')
    - Class names should match file purpose (e.g., `KMCActiveClientsTool`)
    - Include descriptive suffixes (e.g., Tool, Service)
-   - Examples:
-     ```
-     ✅ Good:
-     - kmc_active_clients.py → KMCActiveClientsTool
-     - weather.py → WeatherTool
-     
-     ❌ Bad:
-     - sales.py → SalesTool
-     - business.py → BusinessTool
-     ```
 
-2. **Base Structure**:
+2. **Tool Structure**:
    ```python
-   from typing import Dict, Any
-   from .base import BaseAssistantTool
-
    class YourSpecificTool(BaseAssistantTool):
-       """Tool for specific functionality - provide clear description"""
+       def get_function_definition(self):
+           # Function definition for OpenAI
        
-       @property
-       def name(self) -> str:
-           return "your_specific_function_name"
-
-       def get_function_definition(self) -> Dict[str, Any]:
-           # Must include comprehensive description and parameters
-           pass
-
-       async def your_specific_function_name(self) -> Dict[str, Any]:
-           # Must include proper error handling and logging
-           pass
+       async def your_specific_function(self):
+           # Tool implementation
    ```
 
-3. **Error Handling Requirements**:
-   - Use try-except blocks for all external operations
-   - Include comprehensive logging
-   - Propagate errors with meaningful messages
-   - Send error notifications via WebSocket
-   - Handle database/API errors appropriately
+## Communication Patterns
 
-4. **Configuration Management**:
-   - Add new settings to `app/core/config.py`
-   - Use environment variables for sensitive data
-   - Include default values where appropriate
-   - Update README with new environment variables
+1. **WebSocket Messages**:
+   ```json
+   {
+       "type": "channel-name",
+       "payload": {
+           "message": "content",
+           "timestamp": 1234567890,
+           "status": "in_progress|completed|error"
+       }
+   }
+   ```
 
-## WebSocket Communication
+2. **Channel Management**:
+   - Each functionality has its own channel
+   - Weather updates: "weather-update"
+   - Business analytics: "business-update"
+   - Sales/Office space: "sales-update"
 
-All messages must follow this format:
+## Error Handling
 
-```json
-{
-    "type": "channel-name",
-    "payload": {
-        "message": "content",
-        "timestamp": 1234567890,
-        "status": "in_progress|completed|error",
-        "type": "response|error"
-    }
-}
-```
+1. **Service Level**:
+   - Connection management
+   - Channel subscription errors
+   - Message delivery failures
+   - Service cleanup
 
-## Database Operations
+2. **Tool Level**:
+   - Function execution errors
+   - Data validation
+   - Resource management
+   - Error reporting
 
-When working with database tools:
+## Best Practices
 
-1. **Connection Management**:
-   - Use connection pooling
-   - Implement proper connection cleanup
-   - Handle connection timeouts
-   - Log connection issues
-   - Test connections on initialization
+1. **Service Development**:
+   - Follow single responsibility principle
+   - Implement proper error handling
+   - Use async/await patterns
+   - Maintain service independence
 
-2. **Query Safety**:
-   - Use parameterized queries
-   - Implement query timeout
-   - Handle large result sets appropriately
-   - Format results consistently
-   - Include proper error handling
+2. **Tool Implementation**:
+   - Clear function definitions
+   - Comprehensive error handling
+   - Proper resource cleanup
+   - Detailed logging
 
-## Documentation Requirements
-
-When modifying the project:
-
-1. **Code Documentation**:
-   - Add docstrings to all functions
-   - Include type hints
-   - Document parameters and return values
-   - Add usage examples
-
-2. **Update Relevant MD Files**:
-   - `README.md` for new features or dependencies
-   - `contributing.md` for new development patterns
-   - `websocket.md` for WebSocket changes
-   - `main.py.md` for core functionality changes
-   - `ai_instruction.md` for AI behavior changes
-
-## Response Formatting
-
-1. **Weather Responses**:
-   - Include temperature, humidity, wind speed
-   - Add Kuya Kim's personality
-   - Include weather-appropriate jokes
-
-2. **Business Analytics Responses**:
-   - Format numbers consistently
-   - Provide clear summaries
-   - Maintain professional tone
-   - Include relevant context
-   - Present data in a structured format
-
-## Best Practices Checklist
-
-Before implementing changes:
-
-- [ ] Does it follow the modular architecture?
-- [ ] Does the tool name follow naming conventions?
-- [ ] Are all configurations in settings?
-- [ ] Is proper error handling implemented?
-- [ ] Are WebSocket messages properly formatted?
-- [ ] Is documentation updated?
-- [ ] Are security considerations addressed?
-- [ ] Is proper logging implemented?
-- [ ] Are tests included?
-- [ ] Is the personality maintained?
-- [ ] Are resource cleanups implemented?
-- [ ] Are database operations properly handled?
-
-## Prohibited Actions
-
-1. DO NOT:
-   - Use generic tool names
-   - Mix tool personalities
-   - Hardcode credentials
-   - Skip error handling
-   - Bypass WebSocket manager
-   - Ignore documentation updates
-   - Leave connections unclosed
-   - Remove existing error checks
-   - Change message formats
-   - Skip logging
-   - Modify core architecture
-   - Use non-descriptive variable names
+3. **Event Processing**:
+   - Handle all event types
+   - Maintain message order
+   - Proper error propagation
+   - Clean state management
 
 ## Current Tools
 
 1. **Weather Information**:
    - File: `weather.py`
    - Class: `WeatherTool`
-   - Purpose: Provide weather information with Kuya Kim's personality
+   - Channel: "weather-update"
+   - Purpose: Weather updates with Kuya Kim's personality
 
 2. **KMC Client Analytics**:
    - File: `kmc_active_clients.py`
    - Class: `KMCActiveClientsTool`
-   - Purpose: Provide active client counts per service type
+   - Channel: "business-update"
+   - Purpose: Client portfolio analysis
 
-Remember: This project serves as a critical interface for KMC Solutions. Maintain high standards for code quality, security, and user experience. Follow the naming conventions strictly and ensure proper separation of concerns. 
+3. **Office Space Availability**:
+   - File: `kmc_available_offices.py`
+   - Class: `KMCAvailableOfficesTool`
+   - Channel: "sales-update"
+   - Purpose: Office space consulting
+
+## Usage Example
+
+```python
+# Initialize and run conversation
+run_conversation(
+    message="What's the weather like in Makati?",
+    channel="weather-update"
+)
+
+# Business analytics query
+run_conversation(
+    message="How many active clients do we have?",
+    channel="business-update"
+)
+
+# Office space query
+run_conversation(
+    message="Show available spaces in BGC for 50 people",
+    channel="sales-update"
+)
+```
+
+## Prohibited Actions
+
+1. DO NOT:
+   - Mix service responsibilities
+   - Skip channel management
+   - Ignore error handling
+   - Leave connections unclosed
+   - Mix tool personalities
+   - Hardcode credentials
+   - Use generic service names
+   - Skip proper cleanup
+   - Bypass WebSocket channels
+   - Ignore documentation updates
+
+Remember: This project serves as a critical interface for KMC Solutions. Maintain high standards for code quality, security, and user experience. Follow the service-based architecture and ensure proper separation of concerns. 
