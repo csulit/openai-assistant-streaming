@@ -47,7 +47,7 @@ class CosmoEventHandler(AssistantEventHandler):
                 self.message_content += content
 
                 message_data = {
-                    "message": self.message_content,  # Send accumulated content
+                    "message": self.message_content,
                     "timestamp": time.time(),
                     "status": "in_progress",
                     "type": "response",
@@ -55,7 +55,8 @@ class CosmoEventHandler(AssistantEventHandler):
 
                 if self.loop:
                     try:
-                        self.loop.create_task(
+                        # Use run_until_complete to ensure message is sent before processing next delta
+                        self.loop.run_until_complete(
                             self.ws_service.send_message(self.channel, message_data)
                         )
                     except Exception as e:
