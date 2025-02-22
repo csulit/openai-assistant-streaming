@@ -254,8 +254,8 @@ def main():
                         try:
                             message_data = json.loads(body)
                         except json.JSONDecodeError as e:
-                            error_msg = f"Failed to parse message JSON: {str(e)}"
-                            logger.error(error_msg)
+                            error_msg = "The message format is invalid. Please check your request and try again."
+                            logger.error(f"JSON parse error: {str(e)}")
 
                             # Send error response if reply_to is provided
                             if properties.reply_to:
@@ -266,7 +266,7 @@ def main():
                                     body=json.dumps(error_response),
                                 )
 
-                            # Reject without requeue and send error via WebSocket
+                            # Reject without requeue
                             ch.basic_reject(
                                 delivery_tag=method.delivery_tag, requeue=False
                             )
@@ -275,42 +275,6 @@ def main():
                         success, should_requeue, error_msg = process_message(
                             message_data, properties
                         )
-
-                        # Create and initialize event loop for WebSocket error messages
-                        error_loop = None
-                        if not success:
-                            try:
-                                error_loop = asyncio.new_event_loop()
-                                asyncio.set_event_loop(error_loop)
-                                websocket_service = WebSocketService()
-                                error_loop.run_until_complete(
-                                    websocket_service.connect()
-                                )
-                                error_loop.run_until_complete(
-                                    websocket_service.subscribe(message_data["channel"])
-                                )
-
-                                error_message = {
-                                    "message": error_msg,
-                                    "timestamp": time.time(),
-                                    "status": "error",
-                                    "type": "error",
-                                }
-                                error_loop.run_until_complete(
-                                    websocket_service.send_message(
-                                        message_data["channel"], error_message
-                                    )
-                                )
-                            except Exception as ws_error:
-                                logger.error(
-                                    f"Failed to send error via WebSocket: {ws_error}"
-                                )
-                            finally:
-                                if error_loop:
-                                    error_loop.run_until_complete(
-                                        websocket_service.disconnect()
-                                    )
-                                    error_loop.close()
 
                         # Send response if reply_to is provided
                         if properties.reply_to:
@@ -333,13 +297,61 @@ def main():
                         else:
                             # Message processing failed - reject without requeue
                             logger.error(f"Processing failed: {error_msg}")
+
+                            # Convert technical error to user-friendly message
+                            user_friendly_message = (
+                                "I encountered an issue while processing your request."
+                            )
+                            if "missing" in error_msg.lower():
+                                user_friendly_message = "Some required information is missing from your request. Please make sure to include all necessary details."
+                            elif "invalid" in error_msg.lower():
+                                user_friendly_message = "Some of the information provided was invalid. Please check and try again."
+                            elif "timeout" in error_msg.lower():
+                                user_friendly_message = "The request took too long to process. Please try again."
+                            elif "connection" in error_msg.lower():
+                                user_friendly_message = "I'm having trouble connecting to my services. Please try again in a moment."
+
+                            # Send error via WebSocket
+                            try:
+                                error_loop = asyncio.new_event_loop()
+                                asyncio.set_event_loop(error_loop)
+                                websocket_service = WebSocketService()
+                                error_loop.run_until_complete(
+                                    websocket_service.connect()
+                                )
+                                error_loop.run_until_complete(
+                                    websocket_service.subscribe(message_data["channel"])
+                                )
+
+                                error_message = {
+                                    "message": user_friendly_message,
+                                    "timestamp": time.time(),
+                                    "status": "error",
+                                    "type": "error",
+                                }
+                                error_loop.run_until_complete(
+                                    websocket_service.send_message(
+                                        message_data["channel"], error_message
+                                    )
+                                )
+                            except Exception as ws_error:
+                                logger.error(
+                                    f"Failed to send error via WebSocket: {ws_error}"
+                                )
+                            finally:
+                                if error_loop:
+                                    error_loop.run_until_complete(
+                                        websocket_service.disconnect()
+                                    )
+                                    error_loop.close()
+
                             ch.basic_reject(
                                 delivery_tag=method.delivery_tag, requeue=False
                             )
 
                 except TimeoutError:
-                    error_msg = "Processing timed out"
-                    logger.warning(f"⌛ {error_msg}")
+                    error_msg = "Your request took too long to process. Please try again with a simpler query."
+                    logger.warning(f"⌛ Timeout error")
 
                     try:
                         # Send timeout error via WebSocket
@@ -373,21 +385,21 @@ def main():
                             )
                             error_loop.close()
 
-                    # Send timeout error response if reply_to is provided
-                    if properties.reply_to:
-                        error_response = {"success": False, "error": error_msg}
-                        ch.basic_publish(
-                            exchange="",
-                            routing_key=properties.reply_to,
-                            body=json.dumps(error_response),
-                        )
+                        # Send timeout error response if reply_to is provided
+                        if properties.reply_to:
+                            error_response = {"success": False, "error": error_msg}
+                            ch.basic_publish(
+                                exchange="",
+                                routing_key=properties.reply_to,
+                                body=json.dumps(error_response),
+                            )
 
-                    # Reject without requeue
-                    ch.basic_reject(delivery_tag=method.delivery_tag, requeue=False)
+                        # Reject without requeue
+                        ch.basic_reject(delivery_tag=method.delivery_tag, requeue=False)
 
                 except Exception as e:
-                    error_msg = f"Unexpected error in callback: {e}"
-                    logger.error(error_msg)
+                    error_msg = "An unexpected error occurred. Our team has been notified and is working on it."
+                    logger.error(f"Unexpected error in callback: {str(e)}")
 
                     try:
                         # Send unexpected error via WebSocket
@@ -419,17 +431,17 @@ def main():
                             )
                             error_loop.close()
 
-                    # Send error response if reply_to is provided
-                    if properties.reply_to:
-                        error_response = {"success": False, "error": error_msg}
-                        ch.basic_publish(
-                            exchange="",
-                            routing_key=properties.reply_to,
-                            body=json.dumps(error_response),
-                        )
+                        # Send error response if reply_to is provided
+                        if properties.reply_to:
+                            error_response = {"success": False, "error": error_msg}
+                            ch.basic_publish(
+                                exchange="",
+                                routing_key=properties.reply_to,
+                                body=json.dumps(error_response),
+                            )
 
-                    # Reject without requeue
-                    ch.basic_reject(delivery_tag=method.delivery_tag, requeue=False)
+                        # Reject without requeue
+                        ch.basic_reject(delivery_tag=method.delivery_tag, requeue=False)
 
             # Set up consumer with prefetch count of 1 to ensure one message at a time
             channel.basic_qos(prefetch_count=1)
