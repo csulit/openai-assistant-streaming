@@ -252,7 +252,19 @@ def main():
             logger.info(f"[✓] Queue Name: {QUEUE_NAME}")
             logger.info(f"[✓] Routing Key: {ROUTING_KEY}")
 
-            # Declare queue with settings optimized for multiple consumers
+            # Declare main exchange first
+            channel.exchange_declare(
+                exchange=EXCHANGE_NAME, exchange_type="direct", durable=True
+            )
+            logger.info(f"[✓] Declared main exchange: {EXCHANGE_NAME}")
+
+            # Declare dead letter exchange
+            channel.exchange_declare(
+                exchange=f"{EXCHANGE_NAME}_dlx", exchange_type="direct", durable=True
+            )
+            logger.info(f"[✓] Declared DLX exchange: {EXCHANGE_NAME}_dlx")
+
+            # Now declare queue with settings optimized for multiple consumers
             queue = channel.queue_declare(
                 queue=QUEUE_NAME,
                 durable=True,  # Survive broker restarts
@@ -263,22 +275,22 @@ def main():
                 },
             )
             queue_name = queue.method.queue
+            logger.info(f"[✓] Declared queue: {queue_name}")
 
-            # Declare dead letter exchange and queue
-            channel.exchange_declare(
-                exchange=f"{EXCHANGE_NAME}_dlx", exchange_type="direct", durable=True
-            )
+            # Declare dead letter queue
             channel.queue_declare(queue=f"{QUEUE_NAME}_failed", durable=True)
+            logger.info(f"[✓] Declared failed messages queue: {QUEUE_NAME}_failed")
+
+            # Bind queues to exchanges
+            channel.queue_bind(
+                exchange=EXCHANGE_NAME, queue=queue_name, routing_key=ROUTING_KEY
+            )
             channel.queue_bind(
                 exchange=f"{EXCHANGE_NAME}_dlx",
                 queue=f"{QUEUE_NAME}_failed",
                 routing_key=ROUTING_KEY,
             )
-
-            # Bind to main exchange
-            channel.queue_bind(
-                exchange=EXCHANGE_NAME, queue=queue_name, routing_key=ROUTING_KEY
-            )
+            logger.info(f"[✓] Bound queues to exchanges")
 
             def callback(ch, method, properties, body):
                 try:
