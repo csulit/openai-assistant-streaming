@@ -1,7 +1,6 @@
 import json
 import time
 import logging
-from typing import Dict, Any, Optional
 from openai import AssistantEventHandler
 from ..services.websocket_service import WebSocketService
 from ..services.openai_service import OpenAIService
@@ -43,7 +42,7 @@ class CosmoEventHandler(AssistantEventHandler):
             self.handle_tool_calls(event.data)
 
         elif event.event == "thread.message.delta":
-            time.sleep(0.05)  # Small delay to allow message processing
+            time.sleep(0.10)  # Small delay to allow message processing
             if hasattr(event.data.delta, "content") and event.data.delta.content:
                 content = event.data.delta.content[0].text.value
                 self.message_content += content
@@ -95,34 +94,10 @@ class CosmoEventHandler(AssistantEventHandler):
                     f"Executing function: {tool.function.name} with arguments: {arguments}"
                 )
 
-                # Send tool execution start message
-                start_message = {
-                    "message": f"Executing {tool.function.name}",
-                    "timestamp": time.time(),
-                    "status": "started",
-                    "type": "tool",
-                }
-                if self.loop:
-                    self.loop.run_until_complete(
-                        self.ws_service.send_message(self.channel, start_message)
-                    )
-
                 result = self.loop.run_until_complete(
                     registry.execute_function(tool.function.name, arguments)
                 )
                 logger.debug(f"Function result: {result}")
-
-                # Send tool execution complete message
-                complete_message = {
-                    "message": json.dumps(result) if result is not None else "null",
-                    "timestamp": time.time(),
-                    "status": "completed",
-                    "type": "tool",
-                }
-                if self.loop:
-                    self.loop.run_until_complete(
-                        self.ws_service.send_message(self.channel, complete_message)
-                    )
 
                 tool_outputs.append(
                     {
@@ -132,22 +107,21 @@ class CosmoEventHandler(AssistantEventHandler):
                 )
             except Exception as e:
                 logger.error(f"Error executing function: {str(e)}")
-                # Send error message
-                error_message = {
-                    "message": f"Error executing {tool.function.name}: {str(e)}",
-                    "timestamp": time.time(),
-                    "status": "error",
-                    "type": "tool",
-                }
-                if self.loop:
-                    self.loop.run_until_complete(
-                        self.ws_service.send_message(self.channel, error_message)
-                    )
+                # Convert technical error to user-friendly message
+                user_friendly_message = (
+                    "I had trouble retrieving the information you requested."
+                )
+                if "database" in str(e).lower():
+                    user_friendly_message = "I'm having trouble accessing the database. Please try again in a moment."
+                elif "not found" in str(e).lower():
+                    user_friendly_message = "I couldn't find the information you requested. Please check your query and try again."
+                elif "invalid" in str(e).lower():
+                    user_friendly_message = "Some of the information provided was invalid. Please check and try again."
 
                 tool_outputs.append(
                     {
                         "tool_call_id": tool.id,
-                        "output": f"Error executing function: {str(e)}",
+                        "output": user_friendly_message,
                     }
                 )
 
@@ -180,9 +154,25 @@ class CosmoEventHandler(AssistantEventHandler):
         logger.error(f"Error in event handler: {error}")
         if self.loop and self.ws_service:
             try:
+                # Convert technical error to user-friendly message
+                user_friendly_message = (
+                    "I encountered an issue while processing your request."
+                )
+                if "rate limit" in str(error).lower():
+                    user_friendly_message = "I'm receiving too many requests right now. Please try again in a moment."
+                elif "timeout" in str(error).lower():
+                    user_friendly_message = (
+                        "The request took too long to process. Please try again."
+                    )
+                elif "connection" in str(error).lower():
+                    user_friendly_message = "I'm having trouble connecting to my services. Please try again in a moment."
+                elif "invalid" in str(error).lower():
+                    user_friendly_message = (
+                        "There was an issue with your request format. Please try again."
+                    )
+
                 error_message = {
-                    "message": "I encountered an issue while processing your request. Please try again.",
-                    "error": str(error),
+                    "message": user_friendly_message,
                     "timestamp": time.time(),
                     "status": "error",
                     "type": "error",
