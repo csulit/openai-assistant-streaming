@@ -42,7 +42,6 @@ class CosmoEventHandler(AssistantEventHandler):
             self.handle_tool_calls(event.data)
 
         elif event.event == "thread.message.delta":
-            time.sleep(0.05)  # Reduced delay to 50ms for faster updates
             if hasattr(event.data.delta, "content") and event.data.delta.content:
                 content = event.data.delta.content[0].text.value
                 self.message_content += content
@@ -55,12 +54,12 @@ class CosmoEventHandler(AssistantEventHandler):
                 }
 
                 if self.loop:
-                    logger.debug(
-                        f"Sending message via WebSocket: {json.dumps(message_data)}"
-                    )
-                    self.loop.run_until_complete(
-                        self.ws_service.send_message(self.channel, message_data)
-                    )
+                    try:
+                        self.loop.create_task(
+                            self.ws_service.send_message(self.channel, message_data)
+                        )
+                    except Exception as e:
+                        logger.error(f"Error sending WebSocket message: {str(e)}")
                 else:
                     logger.warning("No event loop available for WebSocket message")
 
@@ -74,9 +73,12 @@ class CosmoEventHandler(AssistantEventHandler):
                         "status": "completed",
                         "type": "response",
                     }
-                    self.loop.run_until_complete(
-                        self.ws_service.send_message(self.channel, final_message)
-                    )
+                    try:
+                        self.loop.create_task(
+                            self.ws_service.send_message(self.channel, final_message)
+                        )
+                    except Exception as e:
+                        logger.error(f"Error sending final WebSocket message: {str(e)}")
                 else:
                     logger.warning("No event loop available for final message")
 
