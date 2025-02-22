@@ -18,18 +18,28 @@ class WebSocketService:
         self.max_retries = 3
         self.retry_delay = 1  # seconds
         self.subscription_timeout = 5  # seconds
+        self.ping_interval = 30  # seconds
+        self.ping_timeout = 10  # seconds
+        self._ping_task = None
 
     def set_loop(self, loop):
         """Set the event loop for async operations"""
         self.loop = loop
 
     async def connect(self):
-        """Connect to the WebSocket server"""
+        """Connect to the WebSocket server with ping/pong enabled"""
         retries = 0
         while retries < self.max_retries:
             try:
-                self.websocket = await websockets.connect(self.uri)
+                self.websocket = await websockets.connect(
+                    self.uri,
+                    ping_interval=self.ping_interval,
+                    ping_timeout=self.ping_timeout,
+                )
                 logger.info("Successfully connected to WebSocket server")
+                # Start ping task
+                if self.loop and not self._ping_task:
+                    self._ping_task = self.loop.create_task(self._keep_alive())
                 return
             except Exception as e:
                 retries += 1
@@ -42,6 +52,21 @@ class WebSocketService:
                 logger.warning(
                     f"Connection attempt {retries} failed, retrying in {self.retry_delay} seconds..."
                 )
+                await asyncio.sleep(self.retry_delay)
+
+    async def _keep_alive(self):
+        """Keep the WebSocket connection alive with periodic health checks"""
+        while True:
+            try:
+                if not self.websocket or self.websocket.closed:
+                    logger.warning("WebSocket disconnected, attempting to reconnect...")
+                    await self.connect()
+                    # Resubscribe to channels after reconnection
+                    for channel in list(self.subscribed_channels):
+                        await self.subscribe(channel)
+                await asyncio.sleep(self.ping_interval)
+            except Exception as e:
+                logger.error(f"Error in keep_alive: {str(e)}")
                 await asyncio.sleep(self.retry_delay)
 
     async def subscribe(self, channel: str):
@@ -90,9 +115,12 @@ class WebSocketService:
             self.subscribed_channels.discard(channel)
 
     async def send_message(self, channel: str, message_data: Dict[str, Any]):
-        """Send a message to a specific channel with retries"""
-        if not self.websocket:
-            raise ValueError("WebSocket not connected")
+        """Send a message to a specific channel with connection check"""
+        if not self.websocket or self.websocket.closed:
+            logger.warning("WebSocket disconnected, reconnecting...")
+            await self.connect()
+            # Resubscribe to channel
+            await self.subscribe(channel)
 
         if channel not in self.subscribed_channels:
             raise ValueError(f"Not subscribed to channel: {channel}")
@@ -100,7 +128,6 @@ class WebSocketService:
         retries = 0
         while retries < self.max_retries:
             try:
-                # Exactly match the required broadcast format
                 message = {"channel": channel, "payload": message_data}
                 await self.websocket.send(json.dumps(message))
                 logger.debug(f"Message sent successfully to channel: {channel}")
@@ -132,10 +159,18 @@ class WebSocketService:
         await self.send_message(channel, error_message)
 
     async def disconnect(self):
-        """Disconnect from the WebSocket server"""
+        """Disconnect from the WebSocket server and cleanup"""
+        if self._ping_task:
+            self._ping_task.cancel()
+            try:
+                await self._ping_task
+            except asyncio.CancelledError:
+                pass
+            self._ping_task = None
+
         if self.websocket:
             try:
-                # Unsubscribe from all channels without waiting for confirmation
+                # Unsubscribe from all channels
                 for channel in list(self.subscribed_channels):
                     try:
                         unsubscribe_message = {
@@ -148,14 +183,10 @@ class WebSocketService:
                             f"Failed to send unsubscribe message for channel {channel}: {str(e)}"
                         )
 
-                # Clear all subscribed channels
                 self.subscribed_channels.clear()
-
-                # Close the connection
                 await self.websocket.close()
                 self.websocket = None
                 logger.info("WebSocket connection closed")
             except Exception as e:
                 logger.error(f"Error during WebSocket disconnect: {str(e)}")
-                # Ensure websocket is marked as closed even if there's an error
                 self.websocket = None
