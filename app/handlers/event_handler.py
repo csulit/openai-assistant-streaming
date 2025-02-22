@@ -42,7 +42,7 @@ class CosmoEventHandler(AssistantEventHandler):
             self.handle_tool_calls(event.data)
 
         elif event.event == "thread.message.delta":
-            time.sleep(0.10)  # Small delay to allow message processing
+            time.sleep(0.05)  # Reduced delay to 50ms for faster updates
             if hasattr(event.data.delta, "content") and event.data.delta.content:
                 content = event.data.delta.content[0].text.value
                 self.message_content += content

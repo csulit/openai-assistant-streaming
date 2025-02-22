@@ -1,11 +1,17 @@
-import pika
-import json
-import time
+# Standard library imports
 import asyncio
+import json
 import logging
 import signal
+import threading
+import time
+import uuid
 from contextlib import contextmanager
-from typing import Optional
+
+# Third-party imports
+import pika
+
+# Local imports
 from app.core.config import settings
 from app.services.openai_service import OpenAIService
 from app.services.websocket_service import WebSocketService
@@ -14,7 +20,6 @@ from app.tools.registry import registry
 from app.tools.weather import WeatherTool
 from app.tools.kmc_active_clients import KMCActiveClientsTool
 from app.tools.kmc_available_offices import KMCAvailableOfficesTool
-import threading
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -226,23 +231,51 @@ def process_message(message_data: dict, properties=None) -> tuple[bool, bool, st
 
 def main():
     """Main RabbitMQ consumer loop"""
+    # Generate a unique consumer tag for this worker instance
+    consumer_tag = f"cosmo_worker_{uuid.uuid4().hex[:8]}"
+
     while True:
         connection = None
         try:
-            # Modified connection parameters with heartbeat
+            # Modified connection parameters optimized for multiple workers
             parameters = pika.URLParameters(RABBITMQ_URL)
-            parameters.heartbeat = 60  # 60 second heartbeat
+            parameters.heartbeat = (
+                15  # 15 second heartbeat - more responsive for multiple workers
+            )
+            parameters.blocked_connection_timeout = (
+                10  # 10 second timeout for blocked connections
+            )
             connection = pika.BlockingConnection(parameters)
             channel = connection.channel()
 
-            logger.info(f"[✓] Connected to RabbitMQ")
+            logger.info(f"[✓] Worker {consumer_tag} connected to RabbitMQ")
             logger.info(f"[✓] Queue Name: {QUEUE_NAME}")
             logger.info(f"[✓] Routing Key: {ROUTING_KEY}")
 
-            # Declare queue and bind to exchange
-            queue = channel.queue_declare(queue=QUEUE_NAME)
+            # Declare queue with settings optimized for multiple consumers
+            queue = channel.queue_declare(
+                queue=QUEUE_NAME,
+                durable=True,  # Survive broker restarts
+                arguments={
+                    "x-max-priority": 10,  # Enable message priority
+                    "x-message-ttl": 3600000,  # Messages expire after 1 hour
+                    "x-dead-letter-exchange": f"{EXCHANGE_NAME}_dlx",  # Dead letter exchange for failed messages
+                },
+            )
             queue_name = queue.method.queue
 
+            # Declare dead letter exchange and queue
+            channel.exchange_declare(
+                exchange=f"{EXCHANGE_NAME}_dlx", exchange_type="direct", durable=True
+            )
+            channel.queue_declare(queue=f"{QUEUE_NAME}_failed", durable=True)
+            channel.queue_bind(
+                exchange=f"{EXCHANGE_NAME}_dlx",
+                queue=f"{QUEUE_NAME}_failed",
+                routing_key=ROUTING_KEY,
+            )
+
+            # Bind to main exchange
             channel.queue_bind(
                 exchange=EXCHANGE_NAME, queue=queue_name, routing_key=ROUTING_KEY
             )
@@ -250,12 +283,14 @@ def main():
             def callback(ch, method, properties, body):
                 try:
                     # Process message with timeout
-                    with timeout(30):  # 30 seconds timeout
+                    with timeout(10):  # 10 seconds timeout
                         try:
                             message_data = json.loads(body)
                         except json.JSONDecodeError as e:
                             error_msg = "The message format is invalid. Please check your request and try again."
-                            logger.error(f"JSON parse error: {str(e)}")
+                            logger.error(
+                                f"Worker {consumer_tag} - JSON parse error: {str(e)}"
+                            )
 
                             # Send error response if reply_to is provided
                             if properties.reply_to:
@@ -399,7 +434,9 @@ def main():
 
                 except Exception as e:
                     error_msg = "An unexpected error occurred. Our team has been notified and is working on it."
-                    logger.error(f"Unexpected error in callback: {str(e)}")
+                    logger.error(
+                        f"Worker {consumer_tag} - Unexpected error in callback: {str(e)}"
+                    )
 
                     try:
                         # Send unexpected error via WebSocket
@@ -443,24 +480,37 @@ def main():
                         # Reject without requeue
                         ch.basic_reject(delivery_tag=method.delivery_tag, requeue=False)
 
-            # Set up consumer with prefetch count of 1 to ensure one message at a time
+            # Set up consumer with prefetch count of 1 to ensure fair dispatch across workers
             channel.basic_qos(prefetch_count=1)
             channel.basic_consume(
-                queue=queue_name, on_message_callback=callback, auto_ack=False
+                queue=queue_name,
+                on_message_callback=callback,
+                auto_ack=False,
+                consumer_tag=consumer_tag,  # Add consumer tag for identification
             )
 
-            logger.info("[*] Waiting for messages. To exit press CTRL+C")
+            logger.info(
+                f"[*] Worker {consumer_tag} waiting for messages. To exit press CTRL+C"
+            )
             channel.start_consuming()
 
         except pika.exceptions.AMQPConnectionError:
-            logger.error("Connection lost, reconnecting...")
-            time.sleep(5)
+            logger.error(f"Worker {consumer_tag} - Connection lost, reconnecting...")
+            time.sleep(5)  # Wait before reconnecting
         except KeyboardInterrupt:
-            logger.info("Consumer stopped by user")
+            logger.info(f"Worker {consumer_tag} stopped by user")
             break
+        except Exception as e:
+            logger.error(f"Worker {consumer_tag} - Unexpected error: {str(e)}")
+            time.sleep(5)  # Wait before retrying
         finally:
             if connection and connection.is_open:
-                connection.close()
+                try:
+                    connection.close()
+                except Exception as e:
+                    logger.error(
+                        f"Worker {consumer_tag} - Error closing connection: {str(e)}"
+                    )
 
 
 if __name__ == "__main__":
