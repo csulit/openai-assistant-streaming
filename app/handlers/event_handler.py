@@ -47,7 +47,7 @@ class CosmoEventHandler(AssistantEventHandler):
                 self.message_content += content
 
                 message_data = {
-                    "message": self.message_content,
+                    "message": self.message_content,  # Send accumulated content
                     "timestamp": time.time(),
                     "status": "in_progress",
                     "type": "response",
