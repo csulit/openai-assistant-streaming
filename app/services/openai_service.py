@@ -6,9 +6,9 @@ from ..tools.registry import registry
 
 class OpenAIService:
     def __init__(self):
-        self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
         self.assistant = None
         self.model = settings.OPENAI_MODEL
+        self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
 
     def create_assistant(self, function_definitions: List[Dict[str, Any]]):
         """Create a new OpenAI assistant with the given function definitions"""
