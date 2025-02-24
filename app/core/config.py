@@ -10,28 +10,29 @@ class Settings(BaseSettings):
     # OpenAI settings
     OPENAI_API_KEY: str
     OPENAI_MODEL: str = "gpt-4o-mini"
-    OPENAI_ASSISTANT_ID: str = "n/a"
+    OPENAI_ASSISTANT_ID: str = ""  # Empty string by default
 
     # Weather API settings
     OPENWEATHER_API_KEY: str
 
     # WebSocket settings
-    WEBSOCKET_URI: str = "wss://erp-v2-cosmo-socket.kmc.solutions/"
+    WEBSOCKET_URI: str = "ws://localhost:4000"
 
     # Database settings
     MSSQL_CONNECTION_STRING: str
 
     # RabbitMQ settings
-    RABBITMQ_URL: str = "amqp://guest:guest@localhost:5672/"
+    RABBITMQ_URL: str = "amqp://user:password@localhost:5672"
     QUEUE_NAME: str = "cosmo_queue"
-    ROUTING_KEY: str = "cosmo.message"
-    EXCHANGE_NAME: str = "malcolm"
+    ROUTING_KEY: str = "cosmo_routing"
+    EXCHANGE_NAME: str = "cosmo_exchange"
 
     # Environment settings
     NODE_ENV: str = "development"
 
     class Config:
         case_sensitive = False
+        env_file = ".env"
 
     def __init__(self, **kwargs):
         # Debug: Print environment variables before initialization
