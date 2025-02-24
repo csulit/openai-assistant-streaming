@@ -57,33 +57,51 @@ class CosmoEventHandler(AssistantEventHandler):
     def on_event(self, event):
         """Handle different types of events from the assistant"""
         logger.debug(f"Received event: {event.event}")
-        self.last_update_time = time.time()  # Update timestamp for any event
+        self.last_update_time = time.time()
+
+        # Send initial status if this is the first event
+        if not self.has_started:
+            self.has_started = True
+            if self.loop and self.ws_service:
+                try:
+                    status_message = {
+                        "message": "Assistant is processing your request...",
+                        "timestamp": time.time(),
+                        "status": "started",
+                        "type": "status",
+                        "final_message": False,
+                    }
+                    self.loop.run_until_complete(
+                        self.ws_service.send_message(self.channel, status_message)
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send initial status: {str(e)}")
 
         if event.event == "thread.run.requires_action":
-            if not self.has_started:
-                self.has_started = True
-                if self.loop and self.ws_service:
-                    try:
-                        status_message = {
-                            "message": "Assistant is gathering information...",
-                            "timestamp": time.time(),
-                            "status": "processing",
-                            "type": "status",
-                            "final_message": False,
-                        }
-                        self.loop.run_until_complete(
-                            self.ws_service.send_message(self.channel, status_message)
-                        )
-                    except Exception as e:
-                        logger.error(f"Failed to send tool execution status: {str(e)}")
+            # Send tool execution status
+            if self.loop and self.ws_service:
+                try:
+                    status_message = {
+                        "message": "Assistant is gathering information...",
+                        "timestamp": time.time(),
+                        "status": "processing",
+                        "type": "status",
+                        "final_message": False,
+                    }
+                    self.loop.run_until_complete(
+                        self.ws_service.send_message(self.channel, status_message)
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send tool execution status: {str(e)}")
 
             self.current_thread_id = event.data.thread_id
             self.current_run_id = event.data.id
             self.handle_tool_calls(event.data)
 
         elif event.event == "thread.message.delta":
-            if not self.has_started:
-                self.has_started = True
+            # Send responding status on first delta
+            if not hasattr(self, "_sent_responding_status"):
+                self._sent_responding_status = True
                 if self.loop and self.ws_service:
                     try:
                         status_message = {
@@ -102,23 +120,18 @@ class CosmoEventHandler(AssistantEventHandler):
             if hasattr(event.data.delta, "content") and event.data.delta.content:
                 content = event.data.delta.content[0].text.value
                 self.message_content += content
-                print(
-                    content, end="", flush=True
-                )  # Print immediately without buffering
+                print(content, end="", flush=True)
 
-                # Accumulate content and only send when we have enough or it's been long enough
                 self.accumulated_content += content
                 current_time = time.time()
                 should_send = (
-                    len(self.accumulated_content)
-                    >= self.min_chunk_size  # Have enough content
-                    or (current_time - self.last_ws_send_time)
-                    >= 1.0  # Or it's been a second
+                    len(self.accumulated_content) >= self.min_chunk_size
+                    or (current_time - self.last_ws_send_time) >= 1.0
                 )
 
                 if should_send and self.accumulated_content:
                     message_data = {
-                        "message": self.message_content,  # Send full message
+                        "message": self.message_content,
                         "timestamp": current_time,
                         "status": "in_progress",
                         "type": "response",
