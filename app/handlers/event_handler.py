@@ -57,22 +57,18 @@ class CosmoEventHandler(AssistantEventHandler):
                 current_time = time.time()
                 if current_time - self.last_ws_send_time >= 0.30:
                     message_data = {
-                        "message": self.message_content,  # Send only the new content
+                        "message": self.message_content,  # Send the full accumulated content
                         "timestamp": current_time,
                         "status": "in_progress",
                         "type": "response",
                     }
 
                     if self.loop:
-                        try:
-                            # Use run_until_complete for ordered delivery
-                            self.loop.run_until_complete(
-                                self.ws_service.send_message(self.channel, message_data)
-                            )
-                            self.last_ws_send_time = current_time
-                            self.last_sent_length = len(self.message_content)
-                        except RuntimeError as e:
-                            logger.error(f"Error sending WebSocket message: {str(e)}")
+                        # Use create_task consistently
+                        self.loop.create_task(
+                            self.ws_service.send_message(self.channel, message_data)
+                        )
+                        self.last_ws_send_time = current_time
                     else:
                         logger.warning("No event loop available for WebSocket message")
 
@@ -86,13 +82,10 @@ class CosmoEventHandler(AssistantEventHandler):
                         "status": "completed",
                         "type": "response",
                     }
-                    try:
-                        # Use run_until_complete for final message too
-                        self.loop.create_task(
-                            self.ws_service.send_message(self.channel, final_message)
-                        )
-                    except RuntimeError as e:
-                        logger.error(f"Error sending final message: {str(e)}")
+                    # Use create_task for final message
+                    self.loop.create_task(
+                        self.ws_service.send_message(self.channel, final_message)
+                    )
 
         elif event.event == "thread.run.completed":
             logger.info("Run completed")
@@ -108,77 +101,61 @@ class CosmoEventHandler(AssistantEventHandler):
                     f"Executing function: {tool.function.name} with arguments: {arguments}"
                 )
 
-                # Create a future for the tool execution
-                future = asyncio.run_coroutine_threadsafe(
-                    registry.execute_function(tool.function.name, arguments), self.loop
-                )
-
+                # Execute the function
+                result = None
                 try:
-                    # Wait for the result with a timeout
-                    result = future.result(timeout=60.0)  # 60 second timeout
-                    logger.debug(f"Function result: {result}")
-
-                    tool_outputs.append(
-                        {
-                            "tool_call_id": tool.id,
-                            "output": (
-                                json.dumps(result) if result is not None else "null"
-                            ),
-                        }
+                    future = asyncio.run_coroutine_threadsafe(
+                        registry.execute_function(tool.function.name, arguments),
+                        self.loop,
                     )
+                    result = future.result(timeout=10.0)
+                    logger.debug(f"Function result: {result}")
                 except TimeoutError:
                     logger.error(f"Tool execution timed out for {tool.function.name}")
-                    # Cancel the future if it timed out
-                    future.cancel()
-                    tool_outputs.append(
-                        {
-                            "tool_call_id": tool.id,
-                            "output": "The operation took too long to complete. Please try again.",
-                        }
+                    result = (
+                        "The operation took too long to complete. Please try again."
                     )
-            except Exception as e:
-                logger.error(f"Error executing function: {str(e)}")
-                user_friendly_message = (
-                    "I had trouble retrieving the information you requested."
-                )
-                if "database" in str(e).lower():
-                    user_friendly_message = "I'm having trouble accessing the database. Please try again in a moment."
-                elif "not found" in str(e).lower():
-                    user_friendly_message = "I couldn't find the information you requested. Please check your query and try again."
-                elif "invalid" in str(e).lower():
-                    user_friendly_message = "Some of the information provided was invalid. Please check and try again."
+                except Exception as e:
+                    logger.error(f"Error executing function: {str(e)}")
+                    result = str(e)
 
                 tool_outputs.append(
                     {
                         "tool_call_id": tool.id,
-                        "output": user_friendly_message,
+                        "output": json.dumps(result) if result is not None else "null",
                     }
                 )
 
-        logger.debug("Submitting tool outputs:", tool_outputs)
-        self.submit_tool_outputs(tool_outputs)
+            except Exception as e:
+                logger.error(f"Error in tool execution: {str(e)}")
+                tool_outputs.append(
+                    {
+                        "tool_call_id": tool.id,
+                        "output": str(e),
+                    }
+                )
 
-    def submit_tool_outputs(self, tool_outputs):
-        """Submit tool outputs back to the assistant"""
-        try:
-            if self.current_thread_id and self.current_run_id:
-                # Create new event handler with the same loop
+        # Submit tool outputs with a new handler instance
+        if self.current_thread_id and self.current_run_id:
+            try:
+                # Create a new handler for tool output submission
                 new_handler = CosmoEventHandler(
                     self.ws_service, self.openai_service, self.channel, self.loop
                 )
+                # Copy over the necessary state
+                new_handler.message_content = self.message_content
+                new_handler.current_thread_id = self.current_thread_id
+                new_handler.current_run_id = self.current_run_id
 
                 self.openai_service.submit_tool_outputs(
                     thread_id=self.current_thread_id,
                     run_id=self.current_run_id,
                     tool_outputs=tool_outputs,
-                    event_handler=new_handler,
+                    event_handler=new_handler,  # Use the new handler instance
                 )
-                logger.info("Tool outputs submitted successfully")
-            else:
-                logger.error("Missing thread_id or run_id")
-        except Exception as e:
-            logger.error(f"Error submitting tool outputs: {str(e)}")
-            raise
+            except Exception as e:
+                logger.error(f"Error submitting tool outputs: {str(e)}")
+                raise
 
     def on_error(self, error):
         """Handle errors during event processing"""
