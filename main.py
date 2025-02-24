@@ -357,15 +357,9 @@ def test_message(thread_id: str, message: str):
         # Wait for completion or timeout
         start_time = time.time()
         last_update_time = start_time
-        max_wait_time = 120  # Maximum total wait time in seconds
 
         while True:
             current_time = time.time()
-
-            # Check for total timeout
-            if current_time - start_time > max_wait_time:
-                print("\nTimeout: Maximum wait time exceeded")
-                os._exit(1)
 
             # Update last activity time if we're receiving content
             if event_handler.last_update_time > last_update_time:
@@ -374,21 +368,20 @@ def test_message(thread_id: str, message: str):
             # Check for timeouts
             if current_time - start_time > 45 and not event_handler.has_started:
                 print("\nTimeout: No response received from assistant")
-                os._exit(1)
+                break
             elif current_time - last_update_time > 60:
                 print("\nTimeout: Response stream interrupted")
-                os._exit(1)
+                break
 
             # Check for completion
             if event_handler.is_complete:
-                print("\nConversation completed successfully!")
-                os._exit(0)  # Force immediate exit
+                print("\nRun completed")
+                break
 
             time.sleep(0.1)
 
     except Exception as e:
         print(f"\n=== ERROR ===\n{str(e)}\n============")
-        os._exit(1)  # Force exit on error
 
 
 def main():
