@@ -57,38 +57,24 @@ class CosmoEventHandler(AssistantEventHandler):
                 # Rate limit WebSocket messages to every 0.25 seconds
                 current_time = time.time()
                 if current_time - self.last_ws_send_time >= 0.25:
-                    # Find the last complete word boundary
-                    words = self.message_content.split()
-                    if words:
-                        # Calculate content up to the last complete word
-                        complete_content = " ".join(words)
+                    message_data = {
+                        "message": self.message_content,
+                        "timestamp": current_time,
+                        "status": "in_progress",
+                        "type": "response",
+                    }
 
-                        # Only send if we have new complete words
-                        if len(complete_content) > self.last_sent_length:
-                            message_data = {
-                                "message": complete_content,
-                                "timestamp": current_time,
-                                "status": "in_progress",
-                                "type": "response",
-                            }
-
-                            if self.loop:
-                                try:
-                                    self.loop.create_task(
-                                        self.ws_service.send_message(
-                                            self.channel, message_data
-                                        )
-                                    )
-                                    self.last_ws_send_time = current_time
-                                    self.last_sent_length = len(complete_content)
-                                except Exception as e:
-                                    logger.error(
-                                        f"Error sending WebSocket message: {str(e)}"
-                                    )
-                            else:
-                                logger.warning(
-                                    "No event loop available for WebSocket message"
-                                )
+                    if self.loop:
+                        try:
+                            # Use run_until_complete to ensure ordered delivery
+                            self.loop.run_until_complete(
+                                self.ws_service.send_message(self.channel, message_data)
+                            )
+                            self.last_ws_send_time = current_time
+                        except Exception as e:
+                            logger.error(f"Error sending WebSocket message: {str(e)}")
+                    else:
+                        logger.warning("No event loop available for WebSocket message")
 
         elif event.event == "thread.message.completed":
             if hasattr(event.data, "content") and event.data.content:
@@ -101,7 +87,8 @@ class CosmoEventHandler(AssistantEventHandler):
                         "type": "response",
                     }
                     try:
-                        self.loop.create_task(
+                        # Use run_until_complete for final message too
+                        self.loop.run_until_complete(
                             self.ws_service.send_message(self.channel, final_message)
                         )
                     except Exception as e:

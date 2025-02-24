@@ -36,18 +36,16 @@ EXCHANGE_NAME = settings.EXCHANGE_NAME
 # Add this at the top level with other globals
 conversation_lock = threading.Lock()
 
+# Initialize tools at startup
+weather_tool = WeatherTool(settings.OPENWEATHER_API_KEY)
+active_clients_tool = KMCActiveClientsTool()
+available_offices_tool = KMCAvailableOfficesTool()
 
-def initialize_tools():
-    """Initialize and register all tools"""
-    weather_tool = WeatherTool(settings.OPENWEATHER_API_KEY)
-    active_clients_tool = KMCActiveClientsTool()
-    available_offices_tool = KMCAvailableOfficesTool()
+registry.register(weather_tool)
+registry.register(active_clients_tool)
+registry.register(available_offices_tool)
 
-    registry.register(weather_tool)
-    registry.register(active_clients_tool)
-    registry.register(available_offices_tool)
-
-    return registry.get_function_definitions()
+function_definitions = registry.get_function_definitions()
 
 
 @contextmanager
@@ -107,9 +105,6 @@ def run_conversation(
             # Initialize services
             openai_service = OpenAIService()
             websocket_service = WebSocketService()
-
-            # Initialize tools
-            function_definitions = initialize_tools()
 
             # Initialize WebSocket connection and subscribe to channel
             try:
@@ -448,16 +443,11 @@ def main():
                                     message_data["channel"], error_message
                                 )
                             )
+                            error_loop.close()
                         except Exception as ws_error:
                             logger.error(
                                 f"Failed to send error via WebSocket: {ws_error}"
                             )
-                        finally:
-                            if error_loop:
-                                error_loop.run_until_complete(
-                                    websocket_service.disconnect()
-                                )
-                                error_loop.close()
 
                         # Reject without requeue
                         ch.basic_reject(delivery_tag=method.delivery_tag, requeue=False)
@@ -490,6 +480,7 @@ def main():
                                     message_data["channel"], error_message
                                 )
                             )
+                            error_loop.close()
 
                             # Reject without requeue
                             ch.basic_reject(
@@ -499,12 +490,6 @@ def main():
                             logger.error(
                                 f"Failed to send timeout error via WebSocket: {ws_error}"
                             )
-                        finally:
-                            if error_loop:
-                                error_loop.run_until_complete(
-                                    websocket_service.disconnect()
-                                )
-                                error_loop.close()
 
                 except Exception as e:
                     if not success:
@@ -512,9 +497,38 @@ def main():
                         logger.error(
                             f"Worker {consumer_tag} - Unexpected error in callback: {str(e)}"
                         )
-                        self._handle_error(
-                            ch, method, properties, message_data, error_msg
-                        )
+                        try:
+                            # Send error via WebSocket
+                            error_loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(error_loop)
+                            websocket_service = WebSocketService()
+                            error_loop.run_until_complete(websocket_service.connect())
+                            error_loop.run_until_complete(
+                                websocket_service.subscribe(message_data["channel"])
+                            )
+
+                            error_message = {
+                                "message": error_msg,
+                                "timestamp": time.time(),
+                                "status": "error",
+                                "type": "error",
+                                "error_details": str(e),
+                            }
+                            error_loop.run_until_complete(
+                                websocket_service.send_message(
+                                    message_data["channel"], error_message
+                                )
+                            )
+                            error_loop.close()
+
+                            # Reject without requeue
+                            ch.basic_reject(
+                                delivery_tag=method.delivery_tag, requeue=False
+                            )
+                        except Exception as ws_error:
+                            logger.error(
+                                f"Failed to send error via WebSocket: {ws_error}"
+                            )
 
             # Set up consumer with prefetch count of 1 to ensure fair dispatch across workers
             channel.basic_qos(prefetch_count=1)
