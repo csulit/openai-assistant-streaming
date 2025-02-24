@@ -31,10 +31,13 @@ class WebSocketService:
         retries = 0
         while retries < self.max_retries:
             try:
+                logger.debug(f"Attempting to connect to WebSocket server at {self.uri}")
                 self.websocket = await websockets.connect(
                     self.uri,
                     ping_interval=self.ping_interval,
                     ping_timeout=self.ping_timeout,
+                    close_timeout=10,  # Increase close timeout
+                    max_size=None,  # No message size limit
                 )
                 logger.info("Successfully connected to WebSocket server")
                 # Start ping task
@@ -50,7 +53,7 @@ class WebSocketService:
                     self.websocket = None
                     raise
                 logger.warning(
-                    f"Connection attempt {retries} failed, retrying in {self.retry_delay} seconds..."
+                    f"Connection attempt {retries} failed, retrying in {self.retry_delay} seconds... Error: {str(e)}"
                 )
                 await asyncio.sleep(self.retry_delay)
 
@@ -58,12 +61,34 @@ class WebSocketService:
         """Keep the WebSocket connection alive with periodic health checks"""
         while True:
             try:
-                if not self.websocket or self.websocket.closed:
-                    logger.warning("WebSocket disconnected, attempting to reconnect...")
+                if not self.websocket:
+                    logger.warning(
+                        "WebSocket not initialized, attempting to connect..."
+                    )
+                    await self.connect()
+                elif self.websocket.closed:
+                    logger.warning("WebSocket closed, attempting to reconnect...")
                     await self.connect()
                     # Resubscribe to channels after reconnection
                     for channel in list(self.subscribed_channels):
-                        await self.subscribe(channel)
+                        try:
+                            await self.subscribe(channel)
+                        except Exception as e:
+                            logger.error(
+                                f"Failed to resubscribe to channel {channel}: {str(e)}"
+                            )
+                else:
+                    try:
+                        # Send a ping to check connection
+                        pong_waiter = await self.websocket.ping()
+                        await asyncio.wait_for(pong_waiter, timeout=self.ping_timeout)
+                        logger.debug("Ping successful")
+                    except Exception as e:
+                        logger.warning(f"Ping failed, connection may be dead: {str(e)}")
+                        # Force reconnection on next iteration
+                        await self.websocket.close()
+                        self.websocket = None
+
                 await asyncio.sleep(self.ping_interval)
             except Exception as e:
                 logger.error(f"Error in keep_alive: {str(e)}")
@@ -75,18 +100,27 @@ class WebSocketService:
             raise ValueError("WebSocket not connected")
 
         try:
-            # Exactly match the required subscription format
+            # Match server's expected subscription format exactly
             subscribe_message = {
                 "channel": "subscription",
                 "payload": {"action": "subscribe", "channel": channel},
             }
-            await self.websocket.send(json.dumps(subscribe_message))
+            message_str = json.dumps(subscribe_message)
+            logger.debug(f"Sending subscription message: {message_str}")
 
-            # Add to subscribed channels immediately
-            # The server logs show it accepts subscriptions right away
-            self.subscribed_channels.add(channel)
-            logger.info(f"Successfully subscribed to channel: {channel}")
-            return
+            # Send with timeout
+            try:
+                await asyncio.wait_for(
+                    self.websocket.send(message_str),
+                    timeout=5.0,  # Increase subscription timeout to 5 seconds
+                )
+                # Add to subscribed channels immediately
+                self.subscribed_channels.add(channel)
+                logger.info(f"Successfully subscribed to channel: {channel}")
+                return
+            except asyncio.TimeoutError as te:
+                logger.error(f"Subscription timed out after 5.0s: {str(te)}")
+                raise
 
         except Exception as e:
             logger.error(f"Error subscribing to channel {channel}: {str(e)}")
@@ -98,7 +132,7 @@ class WebSocketService:
             return
 
         try:
-            # Exactly match the required unsubscription format
+            # Match server's expected unsubscription format exactly
             unsubscribe_message = {
                 "channel": "subscription",
                 "payload": {"action": "unsubscribe", "channel": channel},
@@ -116,33 +150,72 @@ class WebSocketService:
 
     async def send_message(self, channel: str, message_data: Dict[str, Any]):
         """Send a message to a specific channel with connection check"""
-        if not self.websocket or self.websocket.closed:
-            logger.warning("WebSocket disconnected, reconnecting...")
-            await self.connect()
-            # Resubscribe to channel
-            await self.subscribe(channel)
+        if not self.websocket:
+            logger.error("WebSocket not initialized")
+            raise ConnectionError("WebSocket not initialized")
+
+        if self.websocket.closed:
+            logger.warning("WebSocket closed, attempting to reconnect...")
+            try:
+                await self.connect()
+                # Resubscribe to channel
+                await self.subscribe(channel)
+            except Exception as e:
+                logger.error(f"Failed to reconnect: {str(e)}")
+                raise ConnectionError(f"Failed to reconnect: {str(e)}")
 
         if channel not in self.subscribed_channels:
+            logger.error(f"Not subscribed to channel: {channel}")
             raise ValueError(f"Not subscribed to channel: {channel}")
 
         retries = 0
+        last_error = None
         while retries < self.max_retries:
             try:
-                message = {"channel": channel, "payload": message_data}
-                await self.websocket.send(json.dumps(message))
-                logger.debug(f"Message sent successfully to channel: {channel}")
-                return
-            except Exception as e:
-                retries += 1
-                if retries == self.max_retries:
-                    logger.error(
-                        f"Failed to send message after {self.max_retries} attempts: {str(e)}"
-                    )
-                    raise
-                logger.warning(
-                    f"Send attempt {retries} failed, retrying in {self.retry_delay} seconds..."
+                # Format message according to server expectations
+                message = {
+                    "channel": channel,
+                    "payload": message_data,  # The message_data becomes the payload
+                }
+                message_str = json.dumps(message)
+                logger.debug(
+                    f"Sending message to channel {channel}: {message_str[:200]}..."
                 )
+
+                # Send with a longer timeout
+                try:
+                    await asyncio.wait_for(
+                        self.websocket.send(message_str),
+                        timeout=5.0,  # Increase send timeout to 5 seconds
+                    )
+                    logger.debug(f"Message sent successfully to channel: {channel}")
+                    return
+                except asyncio.TimeoutError as te:
+                    logger.error(f"Send operation timed out after 5.0s: {str(te)}")
+                    raise
+
+            except websockets.exceptions.ConnectionClosed as e:
+                last_error = e
+                logger.warning(
+                    f"Connection closed while sending message (attempt {retries + 1}): {str(e)}"
+                )
+                try:
+                    await self.connect()
+                    await self.subscribe(channel)
+                except Exception as reconnect_error:
+                    logger.error(f"Failed to reconnect: {str(reconnect_error)}")
+            except Exception as e:
+                last_error = e
+                logger.error(f"Error sending message (attempt {retries + 1}): {str(e)}")
+
+            retries += 1
+            if retries < self.max_retries:
+                logger.info(f"Waiting {self.retry_delay}s before retry {retries + 1}")
                 await asyncio.sleep(self.retry_delay)
+
+        error_msg = f"Failed to send message after {self.max_retries} attempts. Last error: {str(last_error)}"
+        logger.error(error_msg)
+        raise ConnectionError(error_msg)
 
     async def send_error(
         self, channel: str, error: Exception, friendly_message: Optional[str] = None

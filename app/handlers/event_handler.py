@@ -34,8 +34,25 @@ class CosmoEventHandler(AssistantEventHandler):
         self.ws_service = websocket_service
         self.openai_service = openai_service
         self.channel = channel
+        self.accumulated_content = ""  # Buffer for accumulating content
+        self.min_chunk_size = 10  # Minimum characters before sending
         if loop:
             self.ws_service.set_loop(loop)
+        # Send initial status message
+        if loop and websocket_service:
+            try:
+                initial_message = {
+                    "message": "Assistant is processing your request...",
+                    "timestamp": time.time(),
+                    "status": "started",
+                    "type": "status",
+                    "final_message": False,
+                }
+                loop.run_until_complete(
+                    websocket_service.send_message(channel, initial_message)
+                )
+            except Exception as e:
+                logger.error(f"Failed to send initial status message: {str(e)}")
 
     def on_event(self, event):
         """Handle different types of events from the assistant"""
@@ -43,53 +60,117 @@ class CosmoEventHandler(AssistantEventHandler):
         self.last_update_time = time.time()  # Update timestamp for any event
 
         if event.event == "thread.run.requires_action":
+            if not self.has_started:
+                self.has_started = True
+                if self.loop and self.ws_service:
+                    try:
+                        status_message = {
+                            "message": "Assistant is gathering information...",
+                            "timestamp": time.time(),
+                            "status": "processing",
+                            "type": "status",
+                            "final_message": False,
+                        }
+                        self.loop.run_until_complete(
+                            self.ws_service.send_message(self.channel, status_message)
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to send tool execution status: {str(e)}")
+
             self.current_thread_id = event.data.thread_id
             self.current_run_id = event.data.id
-            self.has_started = True
             self.handle_tool_calls(event.data)
 
         elif event.event == "thread.message.delta":
-            if hasattr(event.data.delta, "content") and event.data.delta.content:
+            if not self.has_started:
                 self.has_started = True
+                if self.loop and self.ws_service:
+                    try:
+                        status_message = {
+                            "message": "Assistant is responding...",
+                            "timestamp": time.time(),
+                            "status": "responding",
+                            "type": "status",
+                            "final_message": False,
+                        }
+                        self.loop.run_until_complete(
+                            self.ws_service.send_message(self.channel, status_message)
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to send response status: {str(e)}")
+
+            if hasattr(event.data.delta, "content") and event.data.delta.content:
                 content = event.data.delta.content[0].text.value
                 self.message_content += content
-                # Rate limit WebSocket messages to every 0.30 seconds
+                print(
+                    content, end="", flush=True
+                )  # Print immediately without buffering
+
+                # Accumulate content and only send when we have enough or it's been long enough
+                self.accumulated_content += content
                 current_time = time.time()
-                if current_time - self.last_ws_send_time >= 0.30:
+                should_send = (
+                    len(self.accumulated_content)
+                    >= self.min_chunk_size  # Have enough content
+                    or (current_time - self.last_ws_send_time)
+                    >= 1.0  # Or it's been a second
+                )
+
+                if should_send and self.accumulated_content:
                     message_data = {
-                        "message": self.message_content,  # Send the full accumulated content
+                        "message": self.message_content,  # Send full message
                         "timestamp": current_time,
                         "status": "in_progress",
                         "type": "response",
+                        "final_message": False,
                     }
 
                     if self.loop:
-                        # Use create_task consistently
-                        self.loop.create_task(
-                            self.ws_service.send_message(self.channel, message_data)
-                        )
-                        self.last_ws_send_time = current_time
+                        try:
+                            self.loop.run_until_complete(
+                                self.ws_service.send_message(self.channel, message_data)
+                            )
+                            self.last_ws_send_time = current_time
+                            self.accumulated_content = ""  # Clear accumulated content
+                        except Exception as e:
+                            logger.error(f"Failed to send WebSocket message: {str(e)}")
                     else:
                         logger.warning("No event loop available for WebSocket message")
 
         elif event.event == "thread.message.completed":
-            if hasattr(event.data, "content") and event.data.content:
-                logger.info("Message completed, sending final message")
-                if self.loop:
-                    final_message = {
-                        "message": self.message_content,
-                        "timestamp": time.time(),
-                        "status": "completed",
-                        "type": "response",
-                    }
-                    # Use create_task for final message
-                    self.loop.create_task(
+            logger.info("Message completed")
+            print()  # New line after content
+            if self.loop:
+                final_message = {
+                    "message": self.message_content,
+                    "timestamp": time.time(),
+                    "status": "completed",
+                    "type": "response",
+                    "final_message": True,
+                }
+                try:
+                    self.loop.run_until_complete(
                         self.ws_service.send_message(self.channel, final_message)
                     )
+                except Exception as e:
+                    logger.error(f"Failed to send final message: {str(e)}")
+            self.is_complete = True
+            # Force cleanup
+            if self.loop and self.ws_service:
+                try:
+                    self.loop.run_until_complete(self.ws_service.disconnect())
+                except Exception as e:
+                    logger.error(f"Failed to disconnect WebSocket: {str(e)}")
 
         elif event.event == "thread.run.completed":
             logger.info("Run completed")
             self.is_complete = True
+            # Force cleanup here as well
+            if self.loop and self.ws_service:
+                try:
+                    self.loop.run_until_complete(self.ws_service.disconnect())
+                except Exception as e:
+                    logger.error(f"Failed to disconnect WebSocket: {str(e)}")
 
     def handle_tool_calls(self, data):
         """Handle tool calls from the assistant"""
@@ -104,11 +185,9 @@ class CosmoEventHandler(AssistantEventHandler):
                 # Execute the function
                 result = None
                 try:
-                    future = asyncio.run_coroutine_threadsafe(
-                        registry.execute_function(tool.function.name, arguments),
-                        self.loop,
+                    result = self.loop.run_until_complete(
+                        registry.execute_function(tool.function.name, arguments)
                     )
-                    result = future.result(timeout=10.0)
                     logger.debug(f"Function result: {result}")
                 except TimeoutError:
                     logger.error(f"Tool execution timed out for {tool.function.name}")
@@ -200,9 +279,11 @@ class CosmoEventHandler(AssistantEventHandler):
                     "error_details": str(error),
                 }
 
-                # Use create_task instead of run_until_complete
-                self.loop.create_task(
-                    self.ws_service.send_message(self.channel, error_message)
-                )
+                try:
+                    self.loop.run_until_complete(
+                        self.ws_service.send_message(self.channel, error_message)
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending error message: {str(e)}")
             except Exception as e:
-                logger.error(f"Error sending error message: {str(e)}")
+                logger.error(f"Error preparing error message: {str(e)}")

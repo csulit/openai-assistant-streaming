@@ -8,6 +8,7 @@ import time
 import uuid
 from contextlib import contextmanager
 import sys
+import os
 
 # Third-party imports
 import pika
@@ -320,6 +321,76 @@ def delete_assistant(assistant_id: str):
     openai_service.delete_assistant(assistant_id)
 
 
+def test_message(thread_id: str, message: str):
+    """Test sending a message directly to a thread
+
+    Args:
+        thread_id (str): The thread ID to send the message to
+        message (str): The message to send
+    """
+    try:
+        # Create event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        # Initialize services
+        openai_service = OpenAIService()
+        websocket_service = WebSocketService()
+
+        # Connect to WebSocket
+        loop.run_until_complete(websocket_service.connect())
+        loop.run_until_complete(websocket_service.subscribe(thread_id))
+
+        # Initialize event handler
+        event_handler = CosmoEventHandler(
+            websocket_service, openai_service, thread_id, loop
+        )
+
+        # Create and process message
+        openai_service.create_message(thread_id, message, event_handler=event_handler)
+        openai_service.stream_conversation(
+            thread_id=thread_id,
+            assistant_id=settings.OPENAI_ASSISTANT_ID,
+            event_handler=event_handler,
+        )
+
+        # Wait for completion or timeout
+        start_time = time.time()
+        last_update_time = start_time
+        max_wait_time = 120  # Maximum total wait time in seconds
+
+        while True:
+            current_time = time.time()
+
+            # Check for total timeout
+            if current_time - start_time > max_wait_time:
+                print("\nTimeout: Maximum wait time exceeded")
+                os._exit(1)
+
+            # Update last activity time if we're receiving content
+            if event_handler.last_update_time > last_update_time:
+                last_update_time = event_handler.last_update_time
+
+            # Check for timeouts
+            if current_time - start_time > 45 and not event_handler.has_started:
+                print("\nTimeout: No response received from assistant")
+                os._exit(1)
+            elif current_time - last_update_time > 60:
+                print("\nTimeout: Response stream interrupted")
+                os._exit(1)
+
+            # Check for completion
+            if event_handler.is_complete:
+                print("\nConversation completed successfully!")
+                os._exit(0)  # Force immediate exit
+
+            time.sleep(0.1)
+
+    except Exception as e:
+        print(f"\n=== ERROR ===\n{str(e)}\n============")
+        os._exit(1)  # Force exit on error
+
+
 def main():
     """Main RabbitMQ consumer loop"""
     # Generate a unique consumer tag for this worker instance
@@ -576,10 +647,17 @@ if __name__ == "__main__":
                 print("Usage: python main.py --delete-assistant <assistant_id>")
                 sys.exit(1)
             delete_assistant(sys.argv[2])
+        elif sys.argv[1] == "--test-message":
+            if len(sys.argv) != 4:
+                print("Please provide both thread ID and message")
+                print("Usage: python main.py --test-message <thread_id> <message>")
+                sys.exit(1)
+            test_message(sys.argv[2], sys.argv[3])
         else:
             print("Unknown command. Available commands:")
             print("  --generate-thread")
             print("  --create-assistant")
             print("  --delete-assistant <assistant_id>")
+            print("  --test-message <thread_id> <message>")
     else:
         main()

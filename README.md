@@ -44,7 +44,9 @@ To delete an existing assistant:
 python main.py --delete-assistant <assistant_id>
 ```
 
-### Generating Test Thread IDs
+### Testing the Service
+
+#### Generating Test Thread IDs
 To generate a thread ID for testing purposes:
 ```bash
 python main.py --generate-thread
@@ -55,7 +57,28 @@ This will output a thread ID in the following format:
 thread_xyz123...
 =====================
 ```
-You can use this thread ID for testing the service with your WebSocket client.
+
+#### Testing Direct Messages
+To test sending a message directly to a thread without using RabbitMQ:
+```bash
+python main.py --test-message <thread_id> "your message here"
+```
+This command will:
+1. Connect to the WebSocket server
+2. Send your message to the specified thread
+3. Stream the assistant's response in real-time
+4. Close the connection when complete
+
+Example:
+```bash
+python main.py --test-message thread_abc123 "What's the weather like today?"
+```
+
+This is useful for:
+- Testing the assistant's responses directly
+- Debugging WebSocket streaming issues
+- Testing tool functionality without RabbitMQ
+- Quick iterations during development
 
 ## Architecture
 
