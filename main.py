@@ -10,6 +10,7 @@ from contextlib import contextmanager
 
 # Third-party imports
 import pika
+from openai import NotFoundError
 
 # Local imports
 from app.core.config import settings
@@ -89,6 +90,8 @@ def run_conversation(
         logger.warning(error_msg)
         return False, error_msg
 
+    websocket_service = None
+    loop = None
     try:
         # Create and initialize event loop
         loop = asyncio.new_event_loop()
@@ -129,12 +132,10 @@ def run_conversation(
                     "status": "error",
                     "type": "error",
                 }
-                try:
-                    loop.run_until_complete(
-                        websocket_service.send_message(channel, error_message)
-                    )
-                except Exception as e:
-                    logger.error(f"Failed to send thread not found error: {str(e)}")
+                loop.run_until_complete(
+                    websocket_service.send_message(channel, error_message)
+                )
+                loop.run_until_complete(websocket_service.disconnect())
                 return False, error_msg
 
             # Initialize event handler with both services and channel
@@ -189,16 +190,36 @@ def run_conversation(
         except TimeoutError as e:
             error_msg = str(e)
             logger.error(error_msg)
+            if websocket_service:
+                error_message = {
+                    "message": "The request took too long to process. Please try again.",
+                    "timestamp": time.time(),
+                    "status": "error",
+                    "type": "error",
+                }
+                loop.run_until_complete(
+                    websocket_service.send_message(channel, error_message)
+                )
             return False, error_msg
         except Exception as e:
             error_msg = f"Error in conversation: {str(e)}"
             logger.error(error_msg)
+            if websocket_service:
+                error_message = {
+                    "message": "An unexpected error occurred. Please try again.",
+                    "timestamp": time.time(),
+                    "status": "error",
+                    "type": "error",
+                }
+                loop.run_until_complete(
+                    websocket_service.send_message(channel, error_message)
+                )
             return False, error_msg
         finally:
             # Cleanup
             if "assistant" in locals():
                 openai_service.delete_assistant(assistant.id)
-            if loop:
+            if websocket_service and loop:
                 loop.run_until_complete(websocket_service.disconnect())
                 loop.close()
 
