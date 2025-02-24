@@ -119,6 +119,24 @@ def run_conversation(
                 logger.error(error_msg)
                 return False, error_msg
 
+            # Check if thread exists
+            thread_exists, error_msg = openai_service.check_thread_exists(channel)
+            if not thread_exists:
+                logger.error(f"Thread not found: {error_msg}")
+                error_message = {
+                    "message": error_msg,
+                    "timestamp": time.time(),
+                    "status": "error",
+                    "type": "error",
+                }
+                try:
+                    loop.run_until_complete(
+                        websocket_service.send_message(channel, error_message)
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send thread not found error: {str(e)}")
+                return False, error_msg
+
             # Initialize event handler with both services and channel
             event_handler = CosmoEventHandler(
                 websocket_service, openai_service, channel, loop
@@ -127,29 +145,46 @@ def run_conversation(
             # Create assistant
             assistant = openai_service.create_assistant(function_definitions)
 
-            # Create message with user's input using the channel as thread_id
-            message = openai_service.create_message(channel, message)
-            logger.info(f"Created message: {message.id}")
+            try:
+                # Create message with user's input using the channel as thread_id
+                message = openai_service.create_message(channel, message)
+                logger.info(f"Created message: {message.id}")
 
-            # Start conversation stream
-            logger.info("Starting conversation stream...")
-            openai_service.stream_conversation(
-                thread_id=channel,
-                assistant_id=assistant.id,
-                event_handler=event_handler,
-            )
+                # Start conversation stream
+                logger.info("Starting conversation stream...")
+                openai_service.stream_conversation(
+                    thread_id=channel,
+                    assistant_id=assistant.id,
+                    event_handler=event_handler,
+                )
 
-            # Wait for completion or timeout
-            start_time = time.time()
-            while not event_handler.is_complete:
-                if (
-                    time.time() - start_time > 25
-                ):  # 25 second timeout (less than the 30s global timeout)
-                    raise TimeoutError("Conversation timed out waiting for completion")
-                time.sleep(0.1)  # Small sleep to prevent CPU spinning
+                # Wait for completion or timeout
+                start_time = time.time()
+                while not event_handler.is_complete:
+                    if (
+                        time.time() - start_time > 25
+                    ):  # 25 second timeout (less than the 30s global timeout)
+                        raise TimeoutError(
+                            "Conversation timed out waiting for completion"
+                        )
+                    time.sleep(0.1)  # Small sleep to prevent CPU spinning
 
-            logger.info("Conversation completed successfully")
-            return True, ""
+                logger.info("Conversation completed successfully")
+                return True, ""
+
+            except NotFoundError as e:
+                error_msg = "Thread not found or was deleted during conversation."
+                logger.error(error_msg)
+                error_message = {
+                    "message": error_msg,
+                    "timestamp": time.time(),
+                    "status": "error",
+                    "type": "error",
+                }
+                loop.run_until_complete(
+                    websocket_service.send_message(channel, error_message)
+                )
+                return False, error_msg
 
         except TimeoutError as e:
             error_msg = str(e)

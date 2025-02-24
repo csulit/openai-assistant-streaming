@@ -1,5 +1,5 @@
-from typing import List, Dict, Any
-from openai import OpenAI, AssistantEventHandler
+from typing import List, Dict, Any, Tuple
+from openai import OpenAI, AssistantEventHandler, NotFoundError
 from ..core.config import settings
 from ..tools.registry import registry
 
@@ -9,6 +9,28 @@ class OpenAIService:
         self.assistant = None
         self.model = settings.OPENAI_MODEL
         self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
+
+    def check_thread_exists(self, thread_id: str) -> Tuple[bool, str]:
+        """Check if a thread exists
+
+        Args:
+            thread_id (str): The ID of the thread to check
+
+        Returns:
+            Tuple[bool, str]: (exists, error_message)
+            - exists: True if thread exists, False otherwise
+            - error_message: Error message if thread doesn't exist, empty string otherwise
+        """
+        try:
+            self.client.beta.threads.retrieve(thread_id)
+            return True, ""
+        except NotFoundError:
+            return (
+                False,
+                "Thread not found. The conversation may have expired or been deleted.",
+            )
+        except Exception as e:
+            return False, f"Error checking thread: {str(e)}"
 
     def create_assistant(self, function_definitions: List[Dict[str, Any]]):
         """Create a new OpenAI assistant with the given function definitions"""
@@ -79,6 +101,9 @@ class OpenAIService:
         Args:
             thread_id (str): The ID of the existing thread to add the message to
             message (str): The message content to add
+
+        Raises:
+            NotFoundError: If the thread_id doesn't exist
         """
         return self.client.beta.threads.messages.create(
             thread_id=thread_id, role="user", content=message
@@ -97,10 +122,18 @@ class OpenAIService:
             thread_id (str): The ID of the existing thread to stream
             assistant_id (str): The ID of the assistant to use
             event_handler (AssistantEventHandler): The event handler for processing responses
+
+        Raises:
+            NotFoundError: If the thread_id doesn't exist
         """
-        with self.client.beta.threads.runs.stream(
+        run = self.client.beta.threads.runs.create(
             thread_id=thread_id,
             assistant_id=assistant_id,
+        )
+
+        with self.client.beta.threads.runs.stream(
+            thread_id=thread_id,
+            run_id=run.id,
             event_handler=event_handler,
         ) as stream:
             stream.until_done()
