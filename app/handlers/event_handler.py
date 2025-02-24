@@ -57,10 +57,10 @@ class CosmoEventHandler(AssistantEventHandler):
                 # Rate limit WebSocket messages to every 0.25 seconds
                 current_time = time.time()
                 if current_time - self.last_ws_send_time >= 0.25:
-                    # Send accumulated content since last send
+                    # Get just the new content since last send
                     new_content = self.message_content[self.last_sent_length :]
                     message_data = {
-                        "message": self.message_content,  # Send full accumulated content
+                        "message": new_content,  # Send only the new content
                         "timestamp": current_time,
                         "status": "in_progress",
                         "type": "response",
