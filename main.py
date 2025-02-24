@@ -75,7 +75,7 @@ def run_conversation(
 
     Args:
         message (str): The user's message to start the conversation
-        channel (str): The WebSocket channel to use for communication
+        channel (str): The thread ID to use for the conversation
         properties: RabbitMQ message properties for potential reply handling
 
     Returns:
@@ -127,18 +127,14 @@ def run_conversation(
             # Create assistant
             assistant = openai_service.create_assistant(function_definitions)
 
-            # Create conversation thread
-            thread = openai_service.create_thread()
-            logger.info(f"Created thread: {thread.id}")
-
-            # Create message with user's input
-            message = openai_service.create_message(thread.id, message)
+            # Create message with user's input using the channel as thread_id
+            message = openai_service.create_message(channel, message)
             logger.info(f"Created message: {message.id}")
 
             # Start conversation stream
             logger.info("Starting conversation stream...")
             openai_service.stream_conversation(
-                thread_id=thread.id,
+                thread_id=channel,
                 assistant_id=assistant.id,
                 event_handler=event_handler,
             )

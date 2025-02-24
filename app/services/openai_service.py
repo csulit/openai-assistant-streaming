@@ -73,12 +73,13 @@ class OpenAIService:
         )
         return self.assistant
 
-    def create_thread(self):
-        """Create a new conversation thread"""
-        return self.client.beta.threads.create()
-
     def create_message(self, thread_id: str, message: str):
-        """Create a new message in a thread"""
+        """Create a new message in a thread
+
+        Args:
+            thread_id (str): The ID of the existing thread to add the message to
+            message (str): The message content to add
+        """
         return self.client.beta.threads.messages.create(
             thread_id=thread_id, role="user", content=message
         )
@@ -90,7 +91,13 @@ class OpenAIService:
     def stream_conversation(
         self, thread_id: str, assistant_id: str, event_handler: AssistantEventHandler
     ):
-        """Stream a conversation with the assistant"""
+        """Stream a conversation with the assistant
+
+        Args:
+            thread_id (str): The ID of the existing thread to stream
+            assistant_id (str): The ID of the assistant to use
+            event_handler (AssistantEventHandler): The event handler for processing responses
+        """
         with self.client.beta.threads.runs.stream(
             thread_id=thread_id,
             assistant_id=assistant_id,
