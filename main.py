@@ -309,8 +309,7 @@ def generate_test_thread():
 def create_assistant():
     """Create a new assistant and get its ID"""
     openai_service = OpenAIService()
-    function_definitions = initialize_tools()
-    openai_service.create_assistant_id(function_definitions)
+    openai_service.create_assistant_id(registry.get_function_definitions())
 
 
 def delete_assistant(assistant_id: str):

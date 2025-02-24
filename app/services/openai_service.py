@@ -1,7 +1,6 @@
 from typing import List, Dict, Any, Tuple
 from openai import OpenAI, AssistantEventHandler, NotFoundError
 from ..core.config import settings
-from ..tools.registry import registry
 import time
 
 
