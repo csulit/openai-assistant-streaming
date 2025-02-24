@@ -154,9 +154,9 @@ def run_conversation(
                         # Reset timeout if we're actively receiving content
                         last_update_time = event_handler.last_update_time
                     elif (
-                        current_time - start_time > 25 and not event_handler.has_started
-                    ):
-                        # If we haven't received any response in 25 seconds
+                        current_time - start_time > 45 and not event_handler.has_started
+                    ):  # Increased from 25 to 45 seconds
+                        # If we haven't received any response in 45 seconds
                         error_msg = "No response received from assistant"
                         logger.error(error_msg)
                         error_message = {
@@ -170,8 +170,10 @@ def run_conversation(
                             websocket_service.send_message(channel, error_message)
                         )
                         raise TimeoutError(error_msg)
-                    elif current_time - last_update_time > 30:
-                        # If we haven't received any updates in 30 seconds after starting
+                    elif (
+                        current_time - last_update_time > 60
+                    ):  # Increased from 30 to 60 seconds
+                        # If we haven't received any updates in 60 seconds after starting
                         error_msg = "Response stream interrupted"
                         logger.error(error_msg)
                         error_message = {
@@ -385,7 +387,7 @@ def main():
                 success = False  # Track if processing was successful
                 try:
                     # Process message with timeout
-                    with timeout(30):  # 30 seconds timeout
+                    with timeout(90):  # Increased from 30 to 90 seconds timeout
                         try:
                             message_data = json.loads(body)
                         except json.JSONDecodeError as e:
@@ -455,7 +457,7 @@ def main():
                     if not success:  # Only handle timeout if not already successful
                         error_msg = "The request is taking longer than expected to process. Please try again."
                         logger.warning(
-                            f"⌛ Timeout error: Request processing exceeded 30 seconds"
+                            f"⌛ Timeout error: Request processing exceeded 90 seconds"
                         )
                         try:
                             # Send timeout error via WebSocket
@@ -472,7 +474,7 @@ def main():
                                 "timestamp": time.time(),
                                 "status": "error",
                                 "type": "timeout",
-                                "error_details": "Processing exceeded 30 second timeout limit",
+                                "error_details": "Processing exceeded 90 second timeout limit",
                             }
                             error_loop.run_until_complete(
                                 websocket_service.send_message(
