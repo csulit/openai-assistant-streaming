@@ -7,6 +7,7 @@ import threading
 import time
 import uuid
 from contextlib import contextmanager
+import sys
 
 # Third-party imports
 import pika
@@ -84,6 +85,11 @@ def run_conversation(
         - success: True if conversation completed successfully
         - error_message: Description of error if any, empty string if successful
     """
+    if not settings.OPENAI_ASSISTANT_ID:
+        error_msg = "OPENAI_ASSISTANT_ID not configured. Please create an assistant first using --create-assistant"
+        logger.error(error_msg)
+        return False, error_msg
+
     # Try to acquire the lock, return if already running
     if not conversation_lock.acquire(blocking=False):
         error_msg = "Another conversation is already in progress"
@@ -122,52 +128,69 @@ def run_conversation(
                 logger.error(error_msg)
                 return False, error_msg
 
-            # Check if thread exists
-            thread_exists, error_msg = openai_service.check_thread_exists(channel)
-            if not thread_exists:
-                logger.error(f"Thread not found: {error_msg}")
-                error_message = {
-                    "message": error_msg,
-                    "timestamp": time.time(),
-                    "status": "error",
-                    "type": "error",
-                }
-                loop.run_until_complete(
-                    websocket_service.send_message(channel, error_message)
-                )
-                loop.run_until_complete(websocket_service.disconnect())
-                return False, error_msg
-
             # Initialize event handler with both services and channel
             event_handler = CosmoEventHandler(
                 websocket_service, openai_service, channel, loop
             )
 
-            # Create assistant
-            assistant = openai_service.create_assistant(function_definitions)
-
             try:
                 # Create message with user's input using the channel as thread_id
-                message = openai_service.create_message(channel, message)
+                message = openai_service.create_message(
+                    channel, message, event_handler=event_handler
+                )
                 logger.info(f"Created message: {message.id}")
 
                 # Start conversation stream
                 logger.info("Starting conversation stream...")
                 openai_service.stream_conversation(
                     thread_id=channel,
-                    assistant_id=assistant.id,
+                    assistant_id=settings.OPENAI_ASSISTANT_ID,
                     event_handler=event_handler,
                 )
 
                 # Wait for completion or timeout
                 start_time = time.time()
+                last_update_time = start_time
                 while not event_handler.is_complete:
-                    if (
-                        time.time() - start_time > 25
-                    ):  # 25 second timeout (less than the 30s global timeout)
-                        raise TimeoutError(
-                            "Conversation timed out waiting for completion"
+                    current_time = time.time()
+
+                    # Check if we've received any message content
+                    if event_handler.last_update_time > last_update_time:
+                        # Reset timeout if we're actively receiving content
+                        last_update_time = event_handler.last_update_time
+                    elif (
+                        current_time - start_time > 25 and not event_handler.has_started
+                    ):
+                        # If we haven't received any response in 25 seconds
+                        error_msg = "No response received from assistant"
+                        logger.error(error_msg)
+                        error_message = {
+                            "message": "The assistant is taking too long to respond. Please try again.",
+                            "timestamp": time.time(),
+                            "status": "error",
+                            "type": "timeout",
+                            "error_details": error_msg,
+                        }
+                        loop.run_until_complete(
+                            websocket_service.send_message(channel, error_message)
                         )
+                        raise TimeoutError(error_msg)
+                    elif current_time - last_update_time > 30:
+                        # If we haven't received any updates in 30 seconds after starting
+                        error_msg = "Response stream interrupted"
+                        logger.error(error_msg)
+                        error_message = {
+                            "message": "The response was interrupted. Please try again.",
+                            "timestamp": time.time(),
+                            "status": "error",
+                            "type": "timeout",
+                            "error_details": error_msg,
+                        }
+                        loop.run_until_complete(
+                            websocket_service.send_message(channel, error_message)
+                        )
+                        raise TimeoutError(error_msg)
+
                     time.sleep(0.1)  # Small sleep to prevent CPU spinning
 
                 logger.info("Conversation completed successfully")
@@ -181,6 +204,7 @@ def run_conversation(
                     "timestamp": time.time(),
                     "status": "error",
                     "type": "error",
+                    "error_details": str(e),
                 }
                 loop.run_until_complete(
                     websocket_service.send_message(channel, error_message)
@@ -196,6 +220,7 @@ def run_conversation(
                     "timestamp": time.time(),
                     "status": "error",
                     "type": "error",
+                    "error_details": error_msg,
                 }
                 loop.run_until_complete(
                     websocket_service.send_message(channel, error_message)
@@ -210,6 +235,7 @@ def run_conversation(
                     "timestamp": time.time(),
                     "status": "error",
                     "type": "error",
+                    "error_details": error_msg,
                 }
                 loop.run_until_complete(
                     websocket_service.send_message(channel, error_message)
@@ -217,8 +243,6 @@ def run_conversation(
             return False, error_msg
         finally:
             # Cleanup
-            if "assistant" in locals():
-                openai_service.delete_assistant(assistant.id)
             if websocket_service and loop:
                 loop.run_until_complete(websocket_service.disconnect())
                 loop.close()
@@ -279,6 +303,25 @@ def process_message(message_data: dict, properties=None) -> tuple[bool, bool, st
         error_msg = f"Error processing message: {str(e)}"
         logger.error(error_msg)
         return False, True, error_msg  # Requeue on unexpected errors
+
+
+def generate_test_thread():
+    """Generate a test thread ID"""
+    openai_service = OpenAIService()
+    openai_service.create_thread()
+
+
+def create_assistant():
+    """Create a new assistant and get its ID"""
+    openai_service = OpenAIService()
+    function_definitions = initialize_tools()
+    openai_service.create_assistant_id(function_definitions)
+
+
+def delete_assistant(assistant_id: str):
+    """Delete an assistant by ID"""
+    openai_service = OpenAIService()
+    openai_service.delete_assistant(assistant_id)
 
 
 def main():
@@ -345,9 +388,10 @@ def main():
             logger.info(f"[✓] Bound queues to exchanges")
 
             def callback(ch, method, properties, body):
+                success = False  # Track if processing was successful
                 try:
                     # Process message with timeout
-                    with timeout(10):  # 10 seconds timeout
+                    with timeout(30):  # 30 seconds timeout
                         try:
                             message_data = json.loads(body)
                         except json.JSONDecodeError as e:
@@ -355,8 +399,6 @@ def main():
                             logger.error(
                                 f"Worker {consumer_tag} - JSON parse error: {str(e)}"
                             )
-
-                            # Send error response if reply_to is provided
                             if properties.reply_to:
                                 error_response = {"success": False, "error": error_msg}
                                 ch.basic_publish(
@@ -364,8 +406,6 @@ def main():
                                     routing_key=properties.reply_to,
                                     body=json.dumps(error_response),
                                 )
-
-                            # Reject without requeue
                             ch.basic_reject(
                                 delivery_tag=method.delivery_tag, requeue=False
                             )
@@ -375,174 +415,106 @@ def main():
                             message_data, properties
                         )
 
-                        # Send response if reply_to is provided
-                        if properties.reply_to:
-                            response = {
-                                "success": success,
-                                "error": error_msg if not success else "",
-                            }
-                            ch.basic_publish(
-                                exchange="",
-                                routing_key=properties.reply_to,
-                                body=json.dumps(response),
-                            )
-
                         if success:
                             # Message processed successfully
                             ch.basic_ack(delivery_tag=method.delivery_tag)
                             logger.info(
                                 "✓ Message processed successfully and acknowledged"
                             )
-                        else:
-                            # Message processing failed - reject without requeue
-                            logger.error(f"Processing failed: {error_msg}")
+                            return  # Exit early on success
 
-                            # Convert technical error to user-friendly message
-                            user_friendly_message = (
-                                "I encountered an issue while processing your request."
+                        # Handle error cases
+                        logger.error(f"Processing failed: {error_msg}")
+
+                        # Send error via WebSocket
+                        try:
+                            error_loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(error_loop)
+                            websocket_service = WebSocketService()
+                            error_loop.run_until_complete(websocket_service.connect())
+                            error_loop.run_until_complete(
+                                websocket_service.subscribe(message_data["channel"])
                             )
-                            if "missing" in error_msg.lower():
-                                user_friendly_message = "Some required information is missing from your request. Please make sure to include all necessary details."
-                            elif "invalid" in error_msg.lower():
-                                user_friendly_message = "Some of the information provided was invalid. Please check and try again."
-                            elif "timeout" in error_msg.lower():
-                                user_friendly_message = "The request took too long to process. Please try again."
-                            elif "connection" in error_msg.lower():
-                                user_friendly_message = "I'm having trouble connecting to my services. Please try again in a moment."
 
-                            # Send error via WebSocket
-                            try:
-                                error_loop = asyncio.new_event_loop()
-                                asyncio.set_event_loop(error_loop)
-                                websocket_service = WebSocketService()
-                                error_loop.run_until_complete(
-                                    websocket_service.connect()
+                            error_message = {
+                                "message": error_msg,
+                                "timestamp": time.time(),
+                                "status": "error",
+                                "type": "error",
+                                "error_details": error_msg,
+                            }
+                            error_loop.run_until_complete(
+                                websocket_service.send_message(
+                                    message_data["channel"], error_message
                                 )
+                            )
+                        except Exception as ws_error:
+                            logger.error(
+                                f"Failed to send error via WebSocket: {ws_error}"
+                            )
+                        finally:
+                            if error_loop:
                                 error_loop.run_until_complete(
-                                    websocket_service.subscribe(message_data["channel"])
+                                    websocket_service.disconnect()
                                 )
+                                error_loop.close()
 
-                                error_message = {
-                                    "message": user_friendly_message,
-                                    "timestamp": time.time(),
-                                    "status": "error",
-                                    "type": "error",
-                                }
-                                error_loop.run_until_complete(
-                                    websocket_service.send_message(
-                                        message_data["channel"], error_message
-                                    )
-                                )
-                            except Exception as ws_error:
-                                logger.error(
-                                    f"Failed to send error via WebSocket: {ws_error}"
-                                )
-                            finally:
-                                if error_loop:
-                                    error_loop.run_until_complete(
-                                        websocket_service.disconnect()
-                                    )
-                                    error_loop.close()
+                        # Reject without requeue
+                        ch.basic_reject(delivery_tag=method.delivery_tag, requeue=False)
 
+                except TimeoutError:
+                    if not success:  # Only handle timeout if not already successful
+                        error_msg = "The request is taking longer than expected to process. Please try again."
+                        logger.warning(
+                            f"⌛ Timeout error: Request processing exceeded 30 seconds"
+                        )
+                        try:
+                            # Send timeout error via WebSocket
+                            error_loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(error_loop)
+                            websocket_service = WebSocketService()
+                            error_loop.run_until_complete(websocket_service.connect())
+                            error_loop.run_until_complete(
+                                websocket_service.subscribe(message_data["channel"])
+                            )
+
+                            error_message = {
+                                "message": error_msg,
+                                "timestamp": time.time(),
+                                "status": "error",
+                                "type": "timeout",
+                                "error_details": "Processing exceeded 30 second timeout limit",
+                            }
+                            error_loop.run_until_complete(
+                                websocket_service.send_message(
+                                    message_data["channel"], error_message
+                                )
+                            )
+
+                            # Reject without requeue
                             ch.basic_reject(
                                 delivery_tag=method.delivery_tag, requeue=False
                             )
-
-                except TimeoutError:
-                    error_msg = "Your request took too long to process. Please try again with a simpler query."
-                    logger.warning(f"⌛ Timeout error")
-
-                    try:
-                        # Send timeout error via WebSocket
-                        error_loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(error_loop)
-                        websocket_service = WebSocketService()
-                        error_loop.run_until_complete(websocket_service.connect())
-                        error_loop.run_until_complete(
-                            websocket_service.subscribe(message_data["channel"])
-                        )
-
-                        error_message = {
-                            "message": error_msg,
-                            "timestamp": time.time(),
-                            "status": "error",
-                            "type": "error",
-                        }
-                        error_loop.run_until_complete(
-                            websocket_service.send_message(
-                                message_data["channel"], error_message
+                        except Exception as ws_error:
+                            logger.error(
+                                f"Failed to send timeout error via WebSocket: {ws_error}"
                             )
-                        )
-                    except Exception as ws_error:
-                        logger.error(
-                            f"Failed to send timeout error via WebSocket: {ws_error}"
-                        )
-                    finally:
-                        if error_loop:
-                            error_loop.run_until_complete(
-                                websocket_service.disconnect()
-                            )
-                            error_loop.close()
-
-                        # Send timeout error response if reply_to is provided
-                        if properties.reply_to:
-                            error_response = {"success": False, "error": error_msg}
-                            ch.basic_publish(
-                                exchange="",
-                                routing_key=properties.reply_to,
-                                body=json.dumps(error_response),
-                            )
-
-                        # Reject without requeue
-                        ch.basic_reject(delivery_tag=method.delivery_tag, requeue=False)
+                        finally:
+                            if error_loop:
+                                error_loop.run_until_complete(
+                                    websocket_service.disconnect()
+                                )
+                                error_loop.close()
 
                 except Exception as e:
-                    error_msg = "An unexpected error occurred. Our team has been notified and is working on it."
-                    logger.error(
-                        f"Worker {consumer_tag} - Unexpected error in callback: {str(e)}"
-                    )
-
-                    try:
-                        # Send unexpected error via WebSocket
-                        error_loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(error_loop)
-                        websocket_service = WebSocketService()
-                        error_loop.run_until_complete(websocket_service.connect())
-                        error_loop.run_until_complete(
-                            websocket_service.subscribe(message_data["channel"])
+                    if not success:
+                        error_msg = "An unexpected error occurred. Our team has been notified and is working on it."
+                        logger.error(
+                            f"Worker {consumer_tag} - Unexpected error in callback: {str(e)}"
                         )
-
-                        error_message = {
-                            "message": error_msg,
-                            "timestamp": time.time(),
-                            "status": "error",
-                            "type": "error",
-                        }
-                        error_loop.run_until_complete(
-                            websocket_service.send_message(
-                                message_data["channel"], error_message
-                            )
+                        self._handle_error(
+                            ch, method, properties, message_data, error_msg
                         )
-                    except Exception as ws_error:
-                        logger.error(f"Failed to send error via WebSocket: {ws_error}")
-                    finally:
-                        if error_loop:
-                            error_loop.run_until_complete(
-                                websocket_service.disconnect()
-                            )
-                            error_loop.close()
-
-                        # Send error response if reply_to is provided
-                        if properties.reply_to:
-                            error_response = {"success": False, "error": error_msg}
-                            ch.basic_publish(
-                                exchange="",
-                                routing_key=properties.reply_to,
-                                body=json.dumps(error_response),
-                            )
-
-                        # Reject without requeue
-                        ch.basic_reject(delivery_tag=method.delivery_tag, requeue=False)
 
             # Set up consumer with prefetch count of 1 to ensure fair dispatch across workers
             channel.basic_qos(prefetch_count=1)
@@ -578,4 +550,21 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "--generate-thread":
+            generate_test_thread()
+        elif sys.argv[1] == "--create-assistant":
+            create_assistant()
+        elif sys.argv[1] == "--delete-assistant":
+            if len(sys.argv) != 3:
+                print("Please provide the assistant ID to delete")
+                print("Usage: python main.py --delete-assistant <assistant_id>")
+                sys.exit(1)
+            delete_assistant(sys.argv[2])
+        else:
+            print("Unknown command. Available commands:")
+            print("  --generate-thread")
+            print("  --create-assistant")
+            print("  --delete-assistant <assistant_id>")
+    else:
+        main()

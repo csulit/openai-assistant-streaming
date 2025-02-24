@@ -2,11 +2,11 @@ from typing import List, Dict, Any, Tuple
 from openai import OpenAI, AssistantEventHandler, NotFoundError
 from ..core.config import settings
 from ..tools.registry import registry
+import time
 
 
 class OpenAIService:
     def __init__(self):
-        self.assistant = None
         self.model = settings.OPENAI_MODEL
         self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
 
@@ -32,9 +32,16 @@ class OpenAIService:
         except Exception as e:
             return False, f"Error checking thread: {str(e)}"
 
-    def create_assistant(self, function_definitions: List[Dict[str, Any]]):
-        """Create a new OpenAI assistant with the given function definitions"""
-        self.assistant = self.client.beta.assistants.create(
+    def create_assistant_id(self, function_definitions: List[Dict[str, Any]]):
+        """Create a new OpenAI assistant and return its ID
+
+        Args:
+            function_definitions (List[Dict[str, Any]]): List of function definitions for the assistant
+
+        Returns:
+            str: The created assistant's ID
+        """
+        assistant = self.client.beta.assistants.create(
             model=self.model,
             name="Cosmo",
             tools=[
@@ -93,25 +100,92 @@ class OpenAIService:
                 Remember: You are Cosmo, a trusted KMC Solutions professional. Your responses should reflect your expertise and commitment to providing excellent service to clients and colleagues.
             """,
         )
-        return self.assistant
+        print(f"\n=== ASSISTANT ID ===\n{assistant.id}\n==================\n")
+        return assistant.id
 
-    def create_message(self, thread_id: str, message: str):
+    def check_active_runs(self, thread_id: str) -> bool:
+        """Check if there are any active runs for a thread
+
+        Args:
+            thread_id (str): The thread ID
+
+        Returns:
+            bool: True if there are active runs, False otherwise
+        """
+        try:
+            runs = self.client.beta.threads.runs.list(thread_id=thread_id)
+            return any(
+                run.status in ["queued", "in_progress", "requires_action"]
+                for run in runs.data
+            )
+        except Exception:
+            return False
+
+    def create_message(
+        self, thread_id: str, message: str, event_handler: AssistantEventHandler = None
+    ):
         """Create a new message in a thread
 
         Args:
             thread_id (str): The ID of the existing thread to add the message to
             message (str): The message content to add
+            event_handler (AssistantEventHandler, optional): Event handler for error propagation
 
         Raises:
             NotFoundError: If the thread_id doesn't exist
+            Exception: If thread has active runs
         """
-        return self.client.beta.threads.messages.create(
-            thread_id=thread_id, role="user", content=message
-        )
+        try:
+            # Check for active runs first
+            if self.check_active_runs(thread_id):
+                error = Exception(
+                    "Thread has an active run. Please wait for it to complete before adding new messages."
+                )
+                if event_handler:
+                    event_handler.on_error(error)
+                raise error
+
+            return self.client.beta.threads.messages.create(
+                thread_id=thread_id, role="user", content=message
+            )
+        except Exception as e:
+            if event_handler:
+                event_handler.on_error(e)
+            raise
 
     def delete_assistant(self, assistant_id: str):
-        """Delete an assistant"""
-        self.client.beta.assistants.delete(assistant_id)
+        """Delete an assistant
+
+        Args:
+            assistant_id (str): The ID of the assistant to delete
+        """
+        try:
+            self.client.beta.assistants.delete(assistant_id)
+            print(
+                f"\n=== DELETED ASSISTANT ===\n{assistant_id}\n=====================\n"
+            )
+        except Exception as e:
+            print(
+                f"\n=== ERROR DELETING ASSISTANT ===\n{str(e)}\n=========================\n"
+            )
+
+    def wait_for_run(self, thread_id: str, run_id: str) -> str:
+        """Wait for a run to be in a state where we can interact with it
+
+        Args:
+            thread_id (str): The thread ID
+            run_id (str): The run ID
+
+        Returns:
+            str: The current status of the run
+        """
+        while True:
+            run = self.client.beta.threads.runs.retrieve(
+                thread_id=thread_id, run_id=run_id
+            )
+            if run.status not in ["queued", "in_progress"]:
+                return run.status
+            time.sleep(0.5)  # Short delay between checks
 
     def stream_conversation(
         self, thread_id: str, assistant_id: str, event_handler: AssistantEventHandler
@@ -126,17 +200,18 @@ class OpenAIService:
         Raises:
             NotFoundError: If the thread_id doesn't exist
         """
-        run = self.client.beta.threads.runs.create(
-            thread_id=thread_id,
-            assistant_id=assistant_id,
-        )
-
-        with self.client.beta.threads.runs.stream(
-            thread_id=thread_id,
-            run_id=run.id,
-            event_handler=event_handler,
-        ) as stream:
-            stream.until_done()
+        try:
+            # Stream the run
+            with self.client.beta.threads.runs.stream(
+                thread_id=thread_id,
+                assistant_id=assistant_id,
+                event_handler=event_handler,
+            ) as stream:
+                stream.until_done()
+        except Exception as e:
+            # Ensure error is propagated to event handler
+            event_handler.on_error(e)
+            raise
 
     def submit_tool_outputs(
         self,
@@ -146,10 +221,27 @@ class OpenAIService:
         event_handler: AssistantEventHandler,
     ):
         """Submit tool outputs to a run"""
-        with self.client.beta.threads.runs.submit_tool_outputs_stream(
-            thread_id=thread_id,
-            run_id=run_id,
-            tool_outputs=tool_outputs,
-            event_handler=event_handler,
-        ) as stream:
-            stream.until_done()
+        try:
+            # Wait for run to be in a state where we can submit outputs
+            status = self.wait_for_run(thread_id, run_id)
+            if status not in ["requires_action"]:
+                raise Exception(f"Cannot submit tool outputs in run status: {status}")
+
+            # Submit tool outputs
+            with self.client.beta.threads.runs.submit_tool_outputs_stream(
+                run_id=run_id,
+                thread_id=thread_id,
+                tool_outputs=tool_outputs,
+                event_handler=event_handler,
+            ) as stream:
+                stream.until_done()
+        except Exception as e:
+            # Ensure error is propagated to event handler
+            event_handler.on_error(e)
+            raise
+
+    def create_thread(self):
+        """Create a new conversation thread for testing purposes"""
+        thread = self.client.beta.threads.create()
+        print(f"\n=== TEST THREAD ID ===\n{thread.id}\n=====================\n")
+        return thread
