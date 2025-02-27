@@ -1,5 +1,5 @@
 from typing import Dict, Any, List
-from .base import AssistantTool
+from .base import BaseAssistantTool
 import logging
 from functools import wraps
 
@@ -24,9 +24,9 @@ class AssistantToolRegistry:
     """Registry for assistant tools"""
 
     def __init__(self):
-        self._tools: Dict[str, AssistantTool] = {}
+        self._tools: Dict[str, BaseAssistantTool] = {}
 
-    def register(self, tool: AssistantTool) -> None:
+    def register(self, tool: BaseAssistantTool) -> None:
         """Register a tool"""
         logger.info(f"Registering tool: {tool.name}")
         if tool.name in self._tools:
@@ -41,7 +41,7 @@ class AssistantToolRegistry:
         else:
             logger.warning(f"Attempted to unregister non-existent tool: {tool_name}")
 
-    def get_tool(self, name: str) -> AssistantTool:
+    def get_tool(self, name: str) -> BaseAssistantTool:
         """Get a tool by name"""
         if name not in self._tools:
             raise ValueError(f"Tool not found: {name}")
@@ -58,7 +58,7 @@ class AssistantToolRegistry:
         return await method(**arguments)
 
     @property
-    def tools(self) -> Dict[str, AssistantTool]:
+    def tools(self) -> Dict[str, BaseAssistantTool]:
         """Get all registered tools"""
         return self._tools.copy()
 

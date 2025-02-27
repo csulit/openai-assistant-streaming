@@ -23,6 +23,8 @@ from app.tools.registry import registry
 from app.tools.weather import WeatherTool
 from app.tools.kmc_active_clients import KMCActiveClientsTool
 from app.tools.kmc_available_offices import KMCAvailableOfficesTool
+from app.tools.user_audit_tool import UserAuditTool
+from app.tools.user_role_tool import UserRoleTool
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -41,10 +43,22 @@ conversation_lock = threading.Lock()
 weather_tool = WeatherTool(settings.OPENWEATHER_API_KEY)
 active_clients_tool = KMCActiveClientsTool()
 available_offices_tool = KMCAvailableOfficesTool()
+user_audit_tool = UserAuditTool()
+user_role_tool = UserRoleTool()
+
+tools = [
+    weather_tool,
+    active_clients_tool,
+    available_offices_tool,
+    user_audit_tool,
+    user_role_tool
+]
 
 registry.register(weather_tool)
 registry.register(active_clients_tool)
 registry.register(available_offices_tool)
+registry.register(user_audit_tool)
+registry.register(user_role_tool)
 
 function_definitions = registry.get_function_definitions()
 
