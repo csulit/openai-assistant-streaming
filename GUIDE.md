@@ -15,7 +15,7 @@ Our system follows this high-level architecture:
 The flow of a conversation is:
 
 ```
-Frontend → WebSocket → RabbitMQ → Worker → OpenAI API → WebSocket → Frontend
+Frontend → RabbitMQ → Worker → WebSocket → Frontend
 ```
 
 ## Integration Steps
