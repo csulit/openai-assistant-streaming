@@ -11,21 +11,23 @@ if env_path:
 logger = logging.getLogger(__name__)
 
 logger.debug("Environment variables before Settings init:")
-logger.debug(f"OPENAI_API_KEY from os.environ: {'*' * 8 if 'OPENAI_API_KEY' in os.environ else 'Not set'}")
+logger.debug(
+    f"OPENAI_API_KEY from os.environ: {'*' * 8 if 'OPENAI_API_KEY' in os.environ else 'Not set'}"
+)
+
 
 class Settings(BaseSettings):
     # OpenAI settings
-    OPENAI_API_KEY: str
-    OPENAI_MODEL: str = "gpt-4-1106-preview"
-    OPENAI_ASSISTANT_ID: Optional[str] = None
+    OPENAI_API_KEY: str = os.environ.get("OPENAI_API_KEY", "")
+    OPENAI_MODEL: str = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
     OPENAI_ASSISTANT_NAME: str = "Cosmo"
     OPENAI_ASSISTANT_INSTRUCTIONS: str = "You are Cosmo, a helpful AI assistant."
 
     # Weather API settings
-    OPENWEATHER_API_KEY: str
+    OPENWEATHER_API_KEY: str = os.environ.get("OPENWEATHER_API_KEY", "")
 
     # WebSocket settings
-    WEBSOCKET_URI: str = "ws://localhost:4000"
+    WEBSOCKET_URL: str = os.environ.get("WEBSOCKET_URL", "ws://localhost:8080/ws")
     WEBSOCKET_HOST: str = "localhost"
     WEBSOCKET_PORT: int = 8765
 
@@ -38,22 +40,35 @@ class Settings(BaseSettings):
     DB_PASSWORD: str = "postgres"
 
     # RabbitMQ settings
-    RABBITMQ_URL: str = "amqp://user:password@localhost:5672"
-    QUEUE_NAME: str = "cosmo_queue"
-    ROUTING_KEY: str = "cosmo_routing"
-    EXCHANGE_NAME: str = "cosmo_exchange"
+    RABBITMQ_URL: str = os.environ.get(
+        "RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"
+    )
+    QUEUE_NAME: str = os.environ.get("QUEUE_NAME", "cosmo_queue")
+    ROUTING_KEY: str = os.environ.get("ROUTING_KEY", "cosmo_key")
+    EXCHANGE_NAME: str = os.environ.get("EXCHANGE_NAME", "cosmo_exchange")
 
     # Environment settings
     NODE_ENV: str = "development"
 
     # API settings
     X_API_KEY: str = "rbac_test_Rnby1BpI5cr9oT1R27NnWxlu2l0BNAzxceHwrDR0Lr"
-    
+
     # Audit API settings
-    AUDIT_API_URL: str = "https://erp-v2-rbac-api-staging.kmcc-app.cc/api/b2b/users/audit-logs"
-    
+    AUDIT_API_URL: str = (
+        "https://erp-v2-rbac-api-staging.kmcc-app.cc/api/b2b/users/audit-logs"
+    )
+
     # User Role API settings
-    USER_ROLE_API_URL: str = "https://erp-v2-rbac-api-staging.kmcc-app.cc/api/b2b/users"
+    USER_ROLE_API_URL: str = (
+        "https://erp-v2-rbac-api-staging.kmcc-app.cc/api/b2b/users/roles"
+    )
+
+    # Redis settings
+    REDIS_URL: str = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+    REDIS_PREFIX: str = os.environ.get("REDIS_PREFIX", "cosmo:")
+    REDIS_THREAD_EXPIRY: int = int(
+        os.environ.get("REDIS_THREAD_EXPIRY", "7776000")
+    )  # 90 days in seconds (90 * 24 * 60 * 60)
 
     class Config:
         case_sensitive = False
@@ -69,7 +84,7 @@ class Settings(BaseSettings):
         # Debug: Print final values after initialization
         print("\nDebug - Final Settings values:")
         print(f"OPENAI_API_KEY in Settings: {'*' * 8}")
-        print(f"WEBSOCKET_URI in Settings: {self.WEBSOCKET_URI}")
+        print(f"WEBSOCKET_URL in Settings: {self.WEBSOCKET_URL}")
         print(
             f"Database connection configured: {'Yes' if self.MSSQL_CONNECTION_STRING else 'No'}"
         )

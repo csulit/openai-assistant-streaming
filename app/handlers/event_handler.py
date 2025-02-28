@@ -19,13 +19,15 @@ class CosmoEventHandler(AssistantEventHandler):
         openai_service: OpenAIService,
         channel: str,
         loop=None,
+        message_id=None,
+        thread_id=None,
     ):
         super().__init__()
         self._stream = None
         self.message_content = ""
         self.last_sent_length = 0  # Track the last sent content length
         self.loop = loop
-        self.current_thread_id = None
+        self.current_thread_id = thread_id  # Initialize with provided thread_id
         self.current_run_id = None
         self.is_complete = False
         self.has_started = False  # Track if we've started receiving content
@@ -34,6 +36,7 @@ class CosmoEventHandler(AssistantEventHandler):
         self.ws_service = websocket_service
         self.openai_service = openai_service
         self.channel = channel
+        self.message_id = message_id  # Store the message_id
         self.accumulated_content = ""  # Buffer for accumulating content
         self.min_chunk_size = 10  # Minimum characters before sending
         if loop:
@@ -47,6 +50,8 @@ class CosmoEventHandler(AssistantEventHandler):
                     "status": "started",
                     "type": "status",
                     "final_message": False,
+                    "message_id": self.message_id,
+                    "thread_id": self.current_thread_id,
                 }
                 loop.run_until_complete(
                     websocket_service.send_message(channel, initial_message)
@@ -70,6 +75,8 @@ class CosmoEventHandler(AssistantEventHandler):
                         "status": "started",
                         "type": "status",
                         "final_message": False,
+                        "message_id": self.message_id,
+                        "thread_id": self.current_thread_id,
                     }
                     self.loop.run_until_complete(
                         self.ws_service.send_message(self.channel, status_message)
@@ -78,6 +85,10 @@ class CosmoEventHandler(AssistantEventHandler):
                     logger.error(f"Failed to send initial status: {str(e)}")
 
         if event.event == "thread.run.requires_action":
+            # Update thread_id if available in the event
+            if hasattr(event.data, "thread_id") and event.data.thread_id:
+                self.current_thread_id = event.data.thread_id
+
             # Send tool execution status
             if self.loop and self.ws_service:
                 try:
@@ -87,6 +98,8 @@ class CosmoEventHandler(AssistantEventHandler):
                         "status": "processing",
                         "type": "status",
                         "final_message": False,
+                        "message_id": self.message_id,
+                        "thread_id": self.current_thread_id,
                     }
                     self.loop.run_until_complete(
                         self.ws_service.send_message(self.channel, status_message)
@@ -94,7 +107,6 @@ class CosmoEventHandler(AssistantEventHandler):
                 except Exception as e:
                     logger.error(f"Failed to send tool execution status: {str(e)}")
 
-            self.current_thread_id = event.data.thread_id
             self.current_run_id = event.data.id
             self.handle_tool_calls(event.data)
 
@@ -110,6 +122,8 @@ class CosmoEventHandler(AssistantEventHandler):
                             "status": "responding",
                             "type": "status",
                             "final_message": False,
+                            "message_id": self.message_id,
+                            "thread_id": self.current_thread_id,
                         }
                         self.loop.run_until_complete(
                             self.ws_service.send_message(self.channel, status_message)
@@ -136,6 +150,8 @@ class CosmoEventHandler(AssistantEventHandler):
                         "status": "in_progress",
                         "type": "response",
                         "final_message": False,
+                        "message_id": self.message_id,
+                        "thread_id": self.current_thread_id,
                     }
 
                     if self.loop:
@@ -160,6 +176,8 @@ class CosmoEventHandler(AssistantEventHandler):
                     "status": "completed",
                     "type": "response",
                     "final_message": True,
+                    "message_id": self.message_id,
+                    "thread_id": self.current_thread_id,
                 }
                 try:
                     self.loop.run_until_complete(
@@ -232,7 +250,12 @@ class CosmoEventHandler(AssistantEventHandler):
             try:
                 # Create a new handler for tool output submission
                 new_handler = CosmoEventHandler(
-                    self.ws_service, self.openai_service, self.channel, self.loop
+                    self.ws_service,
+                    self.openai_service,
+                    self.channel,
+                    self.loop,
+                    self.message_id,  # Pass the message_id to the new handler
+                    self.current_thread_id,  # Pass the current_thread_id to the new handler
                 )
                 # Copy over the necessary state
                 new_handler.message_content = self.message_content
@@ -290,6 +313,8 @@ class CosmoEventHandler(AssistantEventHandler):
                     "status": "error",
                     "type": "error",
                     "error_details": str(error),
+                    "message_id": self.message_id,
+                    "thread_id": self.current_thread_id,
                 }
 
                 try:

@@ -40,8 +40,12 @@ class OpenAIService:
         Returns:
             str: The created assistant's ID
         """
+        # Always use gpt-4o-mini model for the assistant
+        model = "gpt-4o-mini"
+        print(f"Creating assistant with model: {model}")
+
         assistant = self.client.beta.assistants.create(
-            model=self.model,
+            model=model,
             name="Cosmo",
             tools=[
                 {"type": "function", "function": func} for func in function_definitions
@@ -230,6 +234,9 @@ class OpenAIService:
             NotFoundError: If the thread_id doesn't exist
         """
         try:
+            # Log the model being used
+            print(f"Using model: {self.model} (gpt-4o-mini)")
+
             # Stream the run
             with self.client.beta.threads.runs.stream(
                 thread_id=thread_id,

@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 class WebSocketService:
-    def __init__(self, uri: str = settings.WEBSOCKET_URI):
+    def __init__(self, uri: str = settings.WEBSOCKET_URL):
         self.uri = uri
         self.websocket = None
         self.subscribed_channels: Set[str] = set()
