@@ -18,6 +18,68 @@ The flow of a conversation is:
 Frontend → RabbitMQ → Worker → WebSocket → Frontend
 ```
 
+## System Flow Diagram
+
+Below is a description for creating a visual representation of the system flow:
+
+```
+┌─────────────────┐                                              ┌─────────────────┐
+│                 │                                              │                 │
+│    Frontend     │                                              │    Frontend     │
+│   Application   │                                              │   Application   │
+│                 │                                              │                 │
+└────────┬────────┘                                              └────────▲────────┘
+         │                                                                │
+         │                                                                │
+         │ 1. User sends message                                          │ 6. Receive response
+         │                                                                │    via WebSocket
+         ▼                                                                │
+┌─────────────────┐          ┌─────────────────┐          ┌───────────────┴─┐
+│                 │          │                 │          │                 │
+│    RabbitMQ     │          │     Worker      │          │    WebSocket    │
+│    Message      ├─────────►│    Process      ├─────────►│     Server      │
+│     Queue       │          │                 │          │                 │
+│                 │          │                 │          │                 │
+└─────────────────┘          └────────┬────────┘          └─────────────────┘
+                                      │
+                                      │ 2. Process message
+                                      │
+                                      ▼
+                             ┌─────────────────┐
+                             │                 │
+                             │    OpenAI       │
+                             │    Assistant    │
+                             │      API        │
+                             │                 │
+                             └────────┬────────┘
+                                      │
+                                      │ 3. Get response
+                                      │
+                                      ▼
+                             ┌─────────────────┐
+                             │                 │
+                             │     Redis       │
+                             │   (Storage)     │
+                             │                 │
+                             └─────────────────┘
+```
+
+The diagram illustrates the following flow:
+
+1. **User Interaction**: The user sends a message from the frontend application.
+
+2. **Message Queuing**: The message is sent to RabbitMQ, which queues it for processing.
+
+3. **Worker Processing**: A worker picks up the message from RabbitMQ and processes it.
+
+4. **OpenAI Interaction**: The worker sends the message to OpenAI's Assistant API and receives a response.
+
+5. **Data Storage**: Conversation history and thread mappings are stored in Redis.
+
+6. **Response Delivery**: The worker sends the response back to the frontend via WebSocket.
+
+7. **Frontend Update**: The frontend application receives the response and updates the UI accordingly.
+
 ## Integration Steps
 
 ### 1. Establish WebSocket Connection
