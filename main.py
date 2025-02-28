@@ -1050,6 +1050,7 @@ def main():
 
             def callback(ch, method, properties, body):
                 success = False  # Track if processing was successful
+                thread_id = None  # Initialize thread_id to None
                 try:
                     # Process message with timeout
                     with timeout(90):  # Increased from 30 to 90 seconds timeout
@@ -1108,9 +1109,7 @@ def main():
                                 "type": "error",
                                 "error_details": error_msg,
                                 "message_id": message_id,
-                                "thread_id": (
-                                    thread_id if "thread_id" in locals() else None
-                                ),
+                                "thread_id": thread_id,  # Now thread_id is always defined
                             }
                             error_loop.run_until_complete(
                                 websocket_service.send_message(channel, error_message)
@@ -1151,9 +1150,7 @@ def main():
                                 "type": "timeout",
                                 "error_details": "Processing exceeded 90 second timeout limit",
                                 "message_id": message_id,
-                                "thread_id": (
-                                    thread_id if "thread_id" in locals() else None
-                                ),
+                                "thread_id": thread_id,  # Now thread_id is always defined
                             }
                             error_loop.run_until_complete(
                                 websocket_service.send_message(channel, error_message)
@@ -1196,9 +1193,7 @@ def main():
                                 "type": "error",
                                 "error_details": str(e),
                                 "message_id": message_id,
-                                "thread_id": (
-                                    thread_id if "thread_id" in locals() else None
-                                ),
+                                "thread_id": thread_id,  # Now thread_id is always defined
                             }
                             error_loop.run_until_complete(
                                 websocket_service.send_message(channel, error_message)
