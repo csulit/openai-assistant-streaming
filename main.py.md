@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `main.py` file serves as the core of our AI weather assistant application. It integrates OpenAI's Assistant API with a weather service and WebSocket communication to provide real-time weather information with a conversational interface.
+The `main.py` file serves as the core of our AI assistant application. It integrates OpenAI's Assistant API with various tools and services, using WebSocket for real-time communication, RabbitMQ for message queuing, and Redis for conversation persistence.
 
 ## Core Components
 
@@ -10,37 +10,58 @@ The `main.py` file serves as the core of our AI weather assistant application. I
 
 ```python
 # OpenAI Configuration
-client = OpenAI(api_key=settings.OPENAI_API_KEY)
-ASSISTANT_ID = settings.OPENAI_ASSISTANT_ID
-OPENAI_MODEL = settings.OPENAI_MODEL
+openai_service = OpenAIService()
 
 # Tool Registration
 weather_tool = WeatherTool(settings.OPENWEATHER_API_KEY)
+active_clients_tool = KMCActiveClientsTool()
+available_offices_tool = KMCAvailableOfficesTool()
+user_audit_tool = UserAuditTool()
+user_role_tool = UserRoleTool()
+
 registry.register(weather_tool)
+registry.register(active_clients_tool)
+registry.register(available_offices_tool)
+registry.register(user_audit_tool)
+registry.register(user_role_tool)
+
+# Redis Service
+redis_service = RedisService()
 ```
 
 The application initializes with:
-- OpenAI client configuration
-- Weather tool registration
-- WebSocket manager setup
+- OpenAI service configuration
+- Tool registration for various functionalities
+- WebSocket service setup
+- Redis service for conversation persistence
 
-### 2. Assistant Creation
+### 2. Assistant Management
 
 ```python
-assistant = client.beta.assistants.create(
-    model=OPENAI_MODEL,
-    name="My Assistant",
-    tools=[{"type": "function", "function": func} for func in function_definitions],
-    instructions="""I am Kuya Kim, your friendly weather expert!..."""
-)
+def create_assistant():
+    # Check for existing assistant ID in Redis
+    existing_assistant_id = redis_service.get_assistant_id()
+    
+    if existing_assistant_id:
+        # Verify the assistant exists in OpenAI
+        # Return existing ID if valid
+    
+    # Create a new assistant if needed
+    openai_service = OpenAIService()
+    assistant_id = openai_service.create_assistant_id(
+        registry.get_function_definitions()
+    )
+    
+    # Store the new assistant ID in Redis
+    redis_service.set_assistant_id(assistant_id)
 ```
 
-Creates an OpenAI assistant with:
-- Specific personality (Kuya Kim)
-- Weather-focused functionality
-- Access to weather tools
+Manages OpenAI assistants by:
+- Retrieving existing assistant IDs from Redis
+- Creating new assistants when needed
+- Storing assistant IDs for future use
 
-### 3. Event Handler (MyEventHandler)
+### 3. Event Handler (CosmoEventHandler)
 
 The core class managing conversation flow and events:
 
@@ -48,8 +69,8 @@ The core class managing conversation flow and events:
 
 1. **Initialization**:
 ```python
-def __init__(self, websocket_manager, loop=None):
-    # Initializes event handler with WebSocket support
+def __init__(self, websocket_service, openai_service, channel, loop, message_id, thread_id=None):
+    # Initializes event handler with services and conversation identifiers
 ```
 
 2. **Event Processing**:
@@ -65,28 +86,43 @@ def on_event(self, event):
 3. **Tool Execution**:
 ```python
 def handle_tool_calls(self, data):
-    # Processes tool calls (weather queries)
+    # Processes tool calls
     # Sends execution status via WebSocket
 ```
 
 ### 4. Conversation Management
 
-#### Thread Creation
+#### Thread Management
 ```python
-def create_thread():
-    return client.beta.threads.create()
+# Get thread ID from Redis or create a new one
+thread_id = redis_service.get_thread_id(channel)
+
+# If no thread ID exists for this channel, create a new thread
+if not thread_id:
+    thread = openai_service.create_thread()
+    thread_id = thread.id
+    # Store the new thread ID in Redis
+    redis_service.set_thread_id(channel, thread_id)
+    # Initialize metadata
+    redis_service.set_thread_metadata(
+        channel,
+        {
+            "created_at": time.time(),
+            "message_count": 0,
+            "last_message_at": time.time(),
+        },
+    )
 ```
-- Creates a new conversation thread
-- Returns thread ID for tracking
+
+- Creates or retrieves conversation threads
+- Maps channel identifiers to thread IDs in Redis
+- Maintains metadata about conversations
 
 #### Message Creation
 ```python
-def create_message(thread_id, message):
-    return client.beta.threads.messages.create(
-        thread_id=thread_id,
-        role="user",
-        content=message
-    )
+message_obj = openai_service.create_message(
+    thread_id, message, event_handler=event_handler
+)
 ```
 - Adds user messages to the conversation
 - Associates messages with specific threads
@@ -94,60 +130,78 @@ def create_message(thread_id, message):
 ### 5. Main Conversation Flow
 
 ```python
-def run_conversation():
-    # 1. Setup
+def run_conversation(message, channel, message_id, properties=None):
+    # 1. Get assistant ID from Redis
+    assistant_id = redis_service.get_assistant_id()
+    
+    # 2. Setup event loop and services
     loop = asyncio.new_event_loop()
-    event_handler = MyEventHandler(ws_manager, loop)
+    openai_service = OpenAIService()
+    websocket_service = WebSocketService()
     
-    # 2. Initialize WebSocket
-    loop.run_until_complete(ws_manager.connect())
+    # 3. Initialize WebSocket connection and subscribe to channel
+    loop.run_until_complete(websocket_service.connect())
+    loop.run_until_complete(websocket_service.subscribe(channel))
     
-    # 3. Create conversation thread
-    thread = create_thread()
+    # 4. Get or create thread ID from Redis
+    thread_id = redis_service.get_thread_id(channel)
     
-    # 4. Start conversation
-    with client.beta.threads.runs.stream(...) as stream:
-        stream.until_done()
+    # 5. Create event handler
+    event_handler = CosmoEventHandler(
+        websocket_service, openai_service, channel, loop, message_id, thread_id
+    )
+    
+    # 6. Create message and start conversation
+    openai_service.create_message(thread_id, message, event_handler=event_handler)
+    openai_service.stream_conversation(
+        thread_id=thread_id,
+        assistant_id=assistant_id,
+        event_handler=event_handler
+    )
+    
+    # 7. Wait for completion or timeout
+    # 8. Clean up resources
 ```
 
-## Event Flow
+## Message Processing Flow
 
-1. **User Input**:
-   - Creates new thread
-   - Adds user message
-   - Starts conversation stream
+1. **Message Reception**:
+   - Receives messages from RabbitMQ
+   - Validates required fields (message, channel, message_id)
+   - Passes to conversation handler
 
 2. **Processing**:
-   - Assistant receives message
-   - Determines if weather tool needed
-   - Executes weather queries
-   - Generates response
+   - Retrieves or creates thread ID for the channel
+   - Creates message in OpenAI thread
+   - Streams conversation with the assistant
+   - Handles tool calls as needed
 
 3. **Output**:
    - Streams response via WebSocket
-   - Sends tool execution updates
-   - Provides completion status
+   - Sends status updates (started, processing, responding, in_progress, completed)
+   - Provides error handling and timeout management
 
-## Tool Integration
+## Thread Management
 
-### Weather Tool Execution Flow:
+### Thread Persistence
+- Thread IDs are stored in Redis with channel identifiers as keys
+- Metadata includes creation time, message count, and last activity
+- Threads expire after 90 days by default
 
-1. **Trigger**:
-   ```python
-   # When weather information is requested
-   result = self.loop.run_until_complete(
-       registry.execute_function(tool.function.name, arguments)
-   )
-   ```
+### Thread Cleanup Commands
+```python
+def clear_all_threads():
+    # Delete all thread IDs and metadata from Redis
+    # Requires confirmation to prevent accidental data loss
 
-2. **Processing**:
-   - Calls OpenWeather API
-   - Formats weather data
-   - Returns structured response
+def clear_old_threads(days):
+    # Delete threads older than specified number of days
+    # Based on last message timestamp
 
-3. **Response**:
-   - Sends weather data via WebSocket
-   - Incorporates into assistant's response
+def show_thread_stats():
+    # Display statistics about threads in Redis
+    # Includes age distribution, message counts, and storage usage
+```
 
 ## Error Handling
 
@@ -155,54 +209,66 @@ The application includes comprehensive error handling:
 
 1. **Connection Errors**:
    - WebSocket connection failures
-   - API call failures
-   - Network issues
+   - RabbitMQ connection issues
+   - Redis connectivity problems
 
 2. **Processing Errors**:
-   - Invalid tool calls
-   - Failed weather queries
-   - Message processing errors
+   - Invalid message format
+   - Missing required fields
+   - Tool execution failures
 
-3. **Cleanup**:
-   - Proper resource cleanup
-   - Connection termination
-   - Error logging
+3. **Timeout Handling**:
+   - No initial response within 45 seconds
+   - No updates for 60 seconds after starting
+   - Overall processing timeout of 90 seconds
 
-## Best Practices
-
-1. **Async Operations**:
-   - Proper event loop management
-   - Async/await pattern usage
-   - Resource cleanup
-
-2. **State Management**:
-   - Thread tracking
-   - Message history
-   - Connection state
-
-3. **Error Recovery**:
-   - Graceful error handling
-   - User feedback
+4. **Error Reporting**:
+   - WebSocket error messages with details
    - Logging for debugging
+   - Dead letter queue for failed messages
+
+## Testing and Utilities
+
+```python
+def test_message(channel_id, message):
+    # Test sending a message directly without RabbitMQ
+    # Uses the same processing flow as production
+
+def generate_uuid():
+    # Generate a channel identifier for testing
+    # Creates a thread ID in Redis
+```
+
+## RabbitMQ Integration
+
+```python
+def main():
+    # Main RabbitMQ consumer loop
+    # Sets up exchanges, queues, and dead letter handling
+    # Processes messages with proper acknowledgment
+```
+
+Key features:
+- Durable queues and exchanges
+- Message priority support
+- Dead letter exchange for failed messages
+- Automatic reconnection
+- Multiple worker support
 
 ## Usage Example
 
 ```python
 if __name__ == "__main__":
-    run_conversation()
+    if len(sys.argv) > 1:
+        # Handle command-line arguments for utilities
+        # --generate-uuid, --test-message, etc.
+    else:
+        main()  # Start RabbitMQ consumer
 ```
 
 This starts the application and:
 1. Initializes all components
-2. Connects to WebSocket server
-3. Creates conversation thread
-4. Processes user input
-5. Streams responses
-6. Handles cleanup
-
-## Dependencies
-
-- `openai`: OpenAI API client
-- `websockets`: WebSocket communication
-- `asyncio`: Asynchronous I/O
-- Custom tools (`app.tools`) 
+2. Sets up RabbitMQ consumer
+3. Processes incoming messages
+4. Manages conversation threads
+5. Streams responses via WebSocket 
